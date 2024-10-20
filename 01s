@@ -9,8 +9,8 @@
 #ifdef U8X8_HAVE_HW_I2C
 #include <Wire.h>//i2c库
 #endif
-#define SCL 00//定义8266的引脚
-#define SDA 02
+#define SCL 00//定义8266-01s的引脚 ESP8266 gpio0 PIN 00
+#define SDA 02//定义8266-01s的引脚 ESP8266 gpio2 PIN 02
 U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(U8G2_R0, /* clock=*/ SCL, /* data=*/ SDA, /* reset=*/ U8X8_PIN_NONE);   // All Boards without Reset of the Display
 
 #include <ArduinoJson.h>//json解析库
