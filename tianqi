@@ -1,0 +1,402 @@
+
+#include <Arduino.h>
+#include <U8g2lib.h>//1306led显示库
+#include <NTPClient.h>//网络时间库
+#include <WiFiUdp.h>
+#ifdef U8X8_HAVE_HW_SPI
+#include <SPI.h>//i2c库
+#endif
+#ifdef U8X8_HAVE_HW_I2C
+#include <Wire.h>//i2c库
+#endif
+#define SCL 5//定义8266的引脚
+#define SDA 4
+U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(U8G2_R0, /* clock=*/ SCL, /* data=*/ SDA, /* reset=*/ U8X8_PIN_NONE);   // All Boards without Reset of the Display
+
+#include <ArduinoJson.h>//json解析库
+#include <ESP8266WiFi.h>//8266连接wifi库
+#include <ESP8266WiFiMulti.h>
+#include <FS.h>  
+WiFiUDP ntpUDP; 
+NTPClient timeClient(ntpUDP,"ntp1.aliyun.com",60*60*8,30*60*1000);//校准时区：命令，时间服务器网址，时区加减（s），同步时间间隔(ms)
+ESP8266WiFiMulti wifiMulti;//建立wifimulti对象
+const char* host = "api.seniverse.com";   // 将要连接的服务器地址  
+const int httpPort = 80;              // 将要连接的服务器端口      
+ 
+// 心知天气HTTP请求所需信息
+String reqUserKey = "**************";   // 心知天气申请的私钥
+String reqLocation = "*******";            // 城市拼音
+String reqUnit = "c";                      // 摄氏/华氏
+long time1 = 0;//天气实况开始时间
+long time2;//执行中时间
+long time3 = 0;//天气预报开始时间
+
+  //以下是需要显示的全局变量名
+  String date1;
+  String weather0;
+  String weatherNight0;
+  int high0;
+  int low0;
+  String weather1;
+  String weatherNight1;
+  int high1;
+  int low1;
+  String weather2;
+  String weatherNight2;
+  int high2;
+  int low2;
+  String weatherNow;
+  int tempNow;
+  //----------------------------------------------------------------------------------------
+
+void setup(void) {
+  
+  u8g2.begin();
+  u8g2.enableUTF8Print();		// enable UTF8 support for the Arduino print() function支持中文显示打开
+  timeClient.begin();//启动时间服务
+  Serial.begin(115200);          
+
+  connectWiFi();
+   // 启动闪存文件系统
+  if(SPIFFS.begin()){                      
+    Serial.println("SPIFFS Started.");
+  } else {
+    Serial.println("SPIFFS Failed to Start.");
+  }
+}
+
+void loop(void) {
+  timeClient.update();//获取时间
+  time2 = millis();//运行时间
+  if (time2 - time3 > 600000 || time3 == 0){//10分钟或第一次向服务器请求一次天气预报信息
+    // 建立心知天气API每日天气预报请求资源地址
+    String reqRes = "/v3/weather/daily.json?key=" + reqUserKey +
+                   + "&location=" + reqLocation + "&language=zh-Hans&unit=" +
+                   reqUnit + "&start=0&days=3"; 
+   // 向心知天气服务器服务器请求信息并对信息进行解析
+   httpRequest(reqRes);
+   time3 = time2;
+  }
+  if (time2 - time1 >60000 || time1 == 0){//一分钟或第一次向服务器请求一次当前天气信息
+    // 建立心知天气API今天的天气请求资源地址
+    String reqRes1 = "/v3/weather/now.json?key=" + reqUserKey +
+                   + "&location=" + reqLocation + "&language=zh-Hans&unit=" +
+                   reqUnit; 
+   // 向心知天气服务器服务器请求信息并对信息进行解析
+   httpRequest1(reqRes1);
+   time1 = time2;
+  }  
+  displayOled();//把日期时间，3天天气显示在oled上
+}//--------------------------------------------------------------------------------------------------------
+ 
+// 向心知天气服务器服务器请求信息并对信息进行解析（天气预报）
+void httpRequest(String reqRes){
+  WiFiClient client;
+ 
+  // 建立http请求信息
+  String httpRequest = String("GET ") + reqRes + " HTTP/1.1\r\n" + 
+                              "Host: " + host + "\r\n" + 
+                              "Connection: close\r\n\r\n";
+  Serial.println(""); 
+  Serial.print("Connecting to "); Serial.print(host);
+ 
+  // 尝试连接服务器
+  if (client.connect(host, 80)){
+    Serial.println(" Success!");
+ 
+    // 向服务器发送http请求信息
+    client.print(httpRequest);
+    Serial.println("Sending request: ");
+    Serial.println(httpRequest);  
+ 
+    // 获取并显示服务器响应状态行 
+    String status_response = client.readStringUntil('\n');
+    Serial.print("status_response: ");
+    Serial.println(status_response);
+ 
+    // 使用find跳过HTTP响应头
+    if (client.find("\r\n\r\n")) {
+      Serial.println("Found Header End. Start Parsing.");
+    }
+    
+    // 利用ArduinoJson库解析心知天气响应信息
+    parseInfo(client); 
+  }
+  else {
+    Serial.println(" connection failed!");
+  }   
+  //断开客户端与服务器连接工作
+  client.stop(); 
+}
+// 向心知天气服务器服务器请求信息并对信息进行解析（当前天气）
+void httpRequest1(String reqRes1){
+  WiFiClient client;
+ 
+  // 建立http请求信息
+  String httpRequest1 = String("GET ") + reqRes1 + " HTTP/1.1\r\n" + 
+                              "Host: " + host + "\r\n" + 
+                              "Connection: close\r\n\r\n";
+  Serial.println(""); 
+  Serial.print("Connecting to "); Serial.print(host);
+ 
+  // 尝试连接服务器
+  if (client.connect(host, 80)){
+    Serial.println(" Success!");
+ 
+    // 向服务器发送http请求信息
+    client.print(httpRequest1);
+    Serial.println("Sending request: ");
+    Serial.println(httpRequest1);  
+ 
+    // 获取并显示服务器响应状态行 
+    String status_response = client.readStringUntil('\n');
+    Serial.print("status_response: ");
+    Serial.println(status_response);
+ 
+    // 使用find跳过HTTP响应头
+    if (client.find("\r\n\r\n")) {
+      Serial.println("Found Header End. Start Parsing.");
+    }
+    
+    // 利用ArduinoJson库解析心知天气响应信息
+    parseInfo1(client); 
+  }
+  else {
+    Serial.println(" connection failed!");
+  }   
+  //断开客户端与服务器连接工作
+  client.stop(); 
+}
+ 
+// 连接WiFi
+void connectWiFi(){
+      // 连接WiFi
+  wifiMulti.addAP("*************", "********"); //输入所需要使用的WIFI名称和接入密码，注意大小写
+  wifiMulti.addAP("*********", "************");
+  wifiMulti.addAP("***********", "*********");
+  wifiMulti.addAP("**********", "*************");
+  wifiMulti.addAP("***********", "***********");
+  Serial.println("Connecting ...");
+  int i = 0;
+  while (wifiMulti.run()!=WL_CONNECTED){
+    delay(1000);
+    Serial.print(i++);Serial.print(' ');
+  }
+  Serial.println("");
+  Serial.print("Connected to ");
+  Serial.println(WiFi.SSID());
+  Serial.print("IP address:\t");
+  Serial.println(WiFi.localIP());
+}
+
+// 利用ArduinoJson库解析心知天气响应信息
+void parseInfo(WiFiClient client){
+  const size_t capacity = JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(3) + JSON_OBJECT_SIZE(1) + JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(6) + 3*JSON_OBJECT_SIZE(14) + 860;
+  
+  DynamicJsonDocument doc(capacity);
+  
+  deserializeJson(doc, client);
+  
+  JsonObject results_0 = doc["results"][0];
+  
+  JsonArray results_0_daily = results_0["daily"];
+  
+  JsonObject results_0_daily_0 = results_0_daily[0];
+  const char* results_0_daily_0_date = results_0_daily_0["date"]; 
+  const char* results_0_daily_0_text_day = results_0_daily_0["text_day"]; 
+  const char* results_0_daily_0_code_day = results_0_daily_0["code_day"];
+  const char* results_0_daily_0_text_night = results_0_daily_0["text_night"]; 
+  const char* results_0_daily_0_code_night = results_0_daily_0["code_night"]; 
+  const char* results_0_daily_0_high = results_0_daily_0["high"];
+  const char* results_0_daily_0_low = results_0_daily_0["low"]; 
+  const char* results_0_daily_0_rainfall = results_0_daily_0["rainfall"];
+  const char* results_0_daily_0_precip = results_0_daily_0["precip"]; 
+  const char* results_0_daily_0_wind_direction = results_0_daily_0["wind_direction"]; 
+  const char* results_0_daily_0_wind_direction_degree = results_0_daily_0["wind_direction_degree"];
+  const char* results_0_daily_0_wind_speed = results_0_daily_0["wind_speed"];
+  const char* results_0_daily_0_wind_scale = results_0_daily_0["wind_scale"];
+  const char* results_0_daily_0_humidity = results_0_daily_0["humidity"];
+  
+  JsonObject results_0_daily_1 = results_0_daily[1];
+  const char* results_0_daily_1_date = results_0_daily_1["date"];
+  const char* results_0_daily_1_text_day = results_0_daily_1["text_day"];
+  const char* results_0_daily_1_code_day = results_0_daily_1["code_day"];
+  const char* results_0_daily_1_text_night = results_0_daily_1["text_night"]; 
+  const char* results_0_daily_1_code_night = results_0_daily_1["code_night"]; 
+  const char* results_0_daily_1_high = results_0_daily_1["high"];
+  const char* results_0_daily_1_low = results_0_daily_1["low"]; 
+  const char* results_0_daily_1_rainfall = results_0_daily_1["rainfall"]; 
+  const char* results_0_daily_1_precip = results_0_daily_1["precip"]; 
+  const char* results_0_daily_1_wind_direction = results_0_daily_1["wind_direction"];
+  const char* results_0_daily_1_wind_direction_degree = results_0_daily_1["wind_direction_degree"]; 
+  const char* results_0_daily_1_wind_speed = results_0_daily_1["wind_speed"];
+  const char* results_0_daily_1_wind_scale = results_0_daily_1["wind_scale"];
+  const char* results_0_daily_1_humidity = results_0_daily_1["humidity"]; 
+  
+  JsonObject results_0_daily_2 = results_0_daily[2];
+  const char* results_0_daily_2_date = results_0_daily_2["date"];
+  const char* results_0_daily_2_text_day = results_0_daily_2["text_day"];
+  const char* results_0_daily_2_code_day = results_0_daily_2["code_day"];
+  const char* results_0_daily_2_text_night = results_0_daily_2["text_night"];
+  const char* results_0_daily_2_code_night = results_0_daily_2["code_night"];
+  const char* results_0_daily_2_high = results_0_daily_2["high"]; 
+  const char* results_0_daily_2_low = results_0_daily_2["low"]; 
+  const char* results_0_daily_2_rainfall = results_0_daily_2["rainfall"];
+  const char* results_0_daily_2_precip = results_0_daily_2["precip"]; 
+  const char* results_0_daily_2_wind_direction = results_0_daily_2["wind_direction"]; 
+  const char* results_0_daily_2_wind_direction_degree = results_0_daily_2["wind_direction_degree"]; 
+  const char* results_0_daily_2_wind_speed = results_0_daily_2["wind_speed"];
+  const char* results_0_daily_2_wind_scale = results_0_daily_2["wind_scale"]; 
+  const char* results_0_daily_2_humidity = results_0_daily_2["humidity"]; 
+  
+  const char* results_0_last_update = results_0["last_update"]; 
+  
+  // 从以上信息中摘选几个通过串口监视器显示
+  String results_0_daily_0_date_str = results_0_daily_0["date"].as<String>();
+  String  results_0_daily_0_text_day_str = results_0_daily_0["text_day"].as<String>(); 
+  int results_0_daily_0_code_day_int = results_0_daily_0["code_day"].as<int>(); 
+  String results_0_daily_0_text_night_str = results_0_daily_0["text_night"].as<String>(); 
+  int results_0_daily_0_code_night_int = results_0_daily_0["code_night"].as<int>(); 
+  int results_0_daily_0_high_int = results_0_daily_0["high"].as<int>();
+  int results_0_daily_0_low_int = results_0_daily_0["low"].as<int>();
+  String results_0_last_update_str = results_0["last_update"].as<String>();
+
+  String results_0_daily_1_date_str = results_0_daily_1["date"].as<String>();
+  String  results_0_daily_1_text_day_str = results_0_daily_1["text_day"].as<String>(); 
+  String results_0_daily_1_text_night_str = results_0_daily_1["text_night"].as<String>();
+  int results_0_daily_1_high_int = results_0_daily_1["high"].as<int>();
+  int results_0_daily_1_low_int = results_0_daily_1["low"].as<int>();
+
+  String results_0_daily_2_date_str = results_0_daily_2["date"].as<String>();
+  String  results_0_daily_2_text_day_str = results_0_daily_2["text_day"].as<String>(); 
+  String results_0_daily_2_text_night_str = results_0_daily_2["text_night"].as<String>();
+  int results_0_daily_2_high_int = results_0_daily_2["high"].as<int>();
+  int results_0_daily_2_low_int = results_0_daily_2["low"].as<int>();  
+//把需要显示的信息传输到全局变量
+  date1 = results_0_daily_0_date_str;//今天日期
+  weather0 = results_0_daily_0_text_day_str;//今天白天天气
+  weatherNight0 = results_0_daily_0_text_night_str;//夜间天气
+  high0 =results_0_daily_0_high_int;//今天高温
+  low0 =results_0_daily_0_low_int;//今天低温
+  weather1 =results_0_daily_1_text_day_str;
+  weatherNight1 = results_0_daily_1_text_night_str;
+  high1 =results_0_daily_1_high_int;
+  low1 =results_0_daily_1_low_int;
+  weather2 =results_0_daily_2_text_day_str;
+  weatherNight2 = results_0_daily_2_text_night_str;
+  high2 =results_0_daily_2_high_int;
+  low2 =results_0_daily_2_low_int;
+ 
+  Serial.println(F("======Today Weahter ======="));//串口输出今天天气
+  Serial.print(F("DATE: "));
+  Serial.println(results_0_daily_0_date_str);
+  Serial.print(F("Day Weather: "));
+  Serial.print(results_0_daily_0_text_day_str);
+  Serial.print(F(" "));
+  Serial.println(results_0_daily_0_code_day_int);
+  Serial.print(F("Night Weather: "));
+  Serial.print(results_0_daily_0_text_night_str);
+  Serial.print(F(" "));
+  Serial.println(results_0_daily_0_code_night_int);
+  Serial.print(F("High: "));
+  Serial.println(results_0_daily_0_high_int);
+  Serial.print(F("LOW: "));
+  Serial.println(results_0_daily_0_low_int);
+  Serial.print(F("Last Update: "));
+  Serial.println(results_0_last_update_str);
+  Serial.println(F("=============================="));
+ 
+}
+
+// 利用ArduinoJson库解析心知天气响应信息
+void parseInfo1(WiFiClient client){
+  const size_t capacity = JSON_ARRAY_SIZE(1) + JSON_OBJECT_SIZE(1) + 2*JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(6) + 230;
+  DynamicJsonDocument doc(capacity);
+  
+  deserializeJson(doc, client);
+  
+  JsonObject results_0 = doc["results"][0];
+  
+  JsonObject results_0_now = results_0["now"];
+  const char* results_0_now_text = results_0_now["text"]; // "Sunny"
+  const char* results_0_now_code = results_0_now["code"]; // "0"
+  const char* results_0_now_temperature = results_0_now["temperature"]; // "32"
+  
+  const char* results_0_last_update = results_0["last_update"]; // "2020-06-02T14:40:00+08:00" 
+ 
+  // 通过串口监视器显示以上信息
+  String results_0_now_text_str = results_0_now["text"].as<String>(); 
+  int results_0_now_code_int = results_0_now["code"].as<int>(); 
+  int results_0_now_temperature_int = results_0_now["temperature"].as<int>(); 
+  String results_0_last_update_str = results_0["last_update"].as<String>();   
+  weatherNow = results_0_now_text_str;
+  tempNow = results_0_now_temperature_int;
+ 
+  Serial.println(F("======Weahter Now======="));
+  Serial.print(F("Weather Now: "));
+  Serial.print(weatherNow);
+  Serial.print(F(" "));
+  Serial.println(results_0_now_code_int);
+  Serial.print(F("Temperature: "));
+  Serial.println(results_0_now_temperature_int);
+  Serial.print(F("Last Update: "));
+  Serial.println(results_0_last_update_str);
+  Serial.println(F("========================"));
+}
+
+void displayOled(){
+//显示今天日期和时间
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_wqy12_t_gb2312a); 
+  u8g2.setFontDirection(0);
+  u8g2.setCursor(0, 18);
+  u8g2.print(date1);//今天日期
+  u8g2.setCursor(90, 18);
+  u8g2.print(weatherNow);
+  u8g2.setCursor(110, 18);
+  u8g2.print(tempNow);
+  u8g2.setFont(u8g2_font_fub35_tf);
+  u8g2.setCursor(0, 64);//时间
+  u8g2.print(timeClient.getFormattedTime());
+  u8g2.sendBuffer();
+  delay(4000);
+  //显示从今天起3天的天气预报
+  u8g2.setFont(u8g2_font_wqy12_t_gb2312a);  // chinese3 字库约993字
+  u8g2.setFontDirection(0);
+  u8g2.clearBuffer();
+  u8g2.setCursor(0, 20);
+  u8g2.print("今");
+  u8g2.setCursor(20, 20);
+  u8g2.print(weather0);    //白天天气 
+  u8g2.setCursor(52, 20);
+  u8g2.print(weatherNight0);
+  u8g2.setCursor(90, 20);
+  u8g2.print(high0); //高温
+  u8g2.drawStr(105,20,"-");
+  u8g2.setCursor(110, 20);
+  u8g2.print(low0);//低温
+  u8g2.setCursor(0, 40);
+  u8g2.print("明");
+  u8g2.setCursor(20, 40);
+  u8g2.print(weather1);     
+  u8g2.setCursor(52, 40);
+  u8g2.print(weatherNight1);
+  u8g2.setCursor(90, 40);
+  u8g2.print(high1); 
+  u8g2.drawStr(105,40,"-");
+  u8g2.setCursor(110, 40);
+  u8g2.print(low1);
+  u8g2.setCursor(0, 60);
+  u8g2.print("后");
+  u8g2.setCursor(20, 60);
+  u8g2.print(weather2); 
+  u8g2.setCursor(52, 60);
+  u8g2.print(weatherNight2);    
+  u8g2.setCursor(90, 60);
+  u8g2.print(high2); 
+  u8g2.drawStr(105,60,"-");
+  u8g2.setCursor(110, 60);
+  u8g2.print(low2);
+  u8g2.sendBuffer();
+  delay(3000);
+}
