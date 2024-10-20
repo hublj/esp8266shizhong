@@ -1,0 +1,87 @@
+#include <Arduino.h>
+#include <U8g2lib.h>
+#include <time.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <NTPClient.h>
+// change next line to use with another board/shield
+#include <ESP8266WiFi.h>
+//#include <WiFi.h> // for WiFi shield
+//#include <WiFi101.h> // for WiFi 101 shield or MKR1000
+#include <WiFiUdp.h>
+
+#define SDA 2 //ESP8266 D1 PIN 05
+#define SCL 14 //ESP8266 D2 PIN 04
+
+const char *ssid     = "xxx";// wifi account
+const char *password = "xxx";// wifi password
+char *week = "";
+
+//SSD1306,128x64,全屏缓冲模式,模拟I2C,I2C,u8g2(旋转0度,时钟,数据,重置)
+U8G2_SSD1306_128X64_NONAME_1_SW_I2C u8g2(U8G2_R0, /* clock=*/ SCL, /* data=*/ SDA, /* reset=*/ U8X8_PIN_NONE);
+
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "ntp1.aliyun.com",60*60*8, 30*60*1000);//设置访问的ntp服务器
+
+void setup(){
+  Wire.begin(/*SDA*/2,/*SCL*/14);//自定义IIC通信引脚
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
+
+  while ( WiFi.status() != WL_CONNECTED ) {
+    delay ( 500 );
+    Serial.print ( "." );
+  }
+
+  timeClient.begin();
+  u8g2.begin();
+  u8g2.enableUTF8Print();
+}
+
+void loop() {
+  timeClient.update();
+  u8g2.setFont(u8g2_font_unifont_t_chinese2);
+  u8g2.firstPage();
+  do {
+    u8g2.setCursor(0, 15);
+    u8g2.print("北京时间:=");
+    u8g2.setCursor(0, 35);
+    u8g2.print(timeClient.getFormattedTime());
+    u8g2.setCursor(75, 35);
+    switch(timeClient.getDay()){
+      case 0:
+            week = "Sun.";
+            break;
+      case 1:
+            week = "Mon.";
+            break;
+      case 2:
+            week = "Tues.";
+            break;
+      case 3:
+            week = "Wed.";
+            break;
+      case 4:
+            week = "Thur.";
+            break;
+      case 5:
+            week = "Fri.";
+            break;
+      case 6:
+            week = "Sat.";
+            break;
+      }
+    u8g2.print(week);
+    u8g2.setCursor(0, 55);
+    time_t t;
+    struct tm *p;
+    t=timeClient.getEpochTime();
+    p=gmtime(&t);
+    char s[100];
+    //strftime(s, sizeof(s), "%Y-%m-%d %H:%M:%S", p);
+    strftime(s, sizeof(s), "%Y年%m月%d日", p);
+    u8g2.print(s);
+  } while ( u8g2.nextPage() );
+  Serial.println(timeClient.getEpochTime());
+  delay(1000);
+}
