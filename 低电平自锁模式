@@ -1,0 +1,24 @@
+const int inputPin = 12;
+const int outputPin = 2;
+
+bool isLocked = false;
+
+void setup() {
+  pinMode(inputPin, INPUT_PULLUP);
+  pinMode(outputPin, OUTPUT);
+  digitalWrite(outputPin, LOW);  // 初始输出低电平
+}
+
+void loop() {
+  int inputValue = digitalRead(inputPin);
+  if (inputValue == LOW) {
+    if (!isLocked) {
+      digitalWrite(outputPin, HIGH);
+      isLocked = true;
+    } else {
+      digitalWrite(outputPin, LOW);
+      isLocked = false;
+    }
+    while (digitalRead(inputPin) == LOW);  // 等待输入引脚恢复高电平
+  }
+}
