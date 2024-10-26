@@ -1,7 +1,11 @@
-const int inputPin = 12;
-const int outputPin = 2;
+#include <ESP8266WiFi.h>
+
+const int inputPin =2;
+const int outputPin =0;
 
 bool isLocked = false;
+const unsigned long debounceDelay = 20; // 防抖延时时间，可根据实际情况调整
+unsigned long lastDebounceTime = 0;
 
 void setup() {
   pinMode(inputPin, INPUT_PULLUP);
@@ -11,14 +15,20 @@ void setup() {
 
 void loop() {
   int inputValue = digitalRead(inputPin);
+  unsigned long currentTime = millis();
+
   if (inputValue == LOW) {
-    if (!isLocked) {
-      digitalWrite(outputPin, HIGH);
-      isLocked = true;
-    } else {
-      digitalWrite(outputPin, LOW);
-      isLocked = false;
+    if (currentTime - lastDebounceTime > debounceDelay) {
+      lastDebounceTime = currentTime;
+      if (!isLocked) {
+        digitalWrite(outputPin, HIGH);
+        isLocked = true;
+      } else {
+        digitalWrite(outputPin, LOW);
+        isLocked = false;
+      }
     }
-    while (digitalRead(inputPin) == LOW);  // 等待输入引脚恢复高电平
   }
+
+  while (digitalRead(inputPin) == LOW);  // 等待输入引脚恢复高电平
 }
