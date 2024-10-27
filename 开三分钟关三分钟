@@ -1,0 +1,41 @@
+#include <ESP8266WiFi.h>
+
+// 定义输出引脚
+const int outputPin = 0;
+
+// 用于记录状态切换时间
+volatile unsigned long startTime = 0;
+// 状态标志，true 表示开启，false 表示关闭
+bool isOn = false;
+
+// 3 分钟的毫秒数
+const unsigned long threeMinutesInMillis = 3 * 60 * 1000;
+
+void setup() {
+    // 初始化串口通信，波特率可根据需要设置
+    Serial.begin(115200);
+
+    // 设置输出引脚为输出模式
+    pinMode(outputPin, OUTPUT);
+
+    // 初始状态为关闭
+    digitalWrite(outputPin, LOW);
+}
+
+void loop() {
+    unsigned long currentTime = millis();
+
+    if (!isOn && currentTime - startTime >= threeMinutesInMillis) {
+        // 开启状态
+        digitalWrite(outputPin, HIGH);
+        isOn = true;
+        startTime = currentTime;
+        Serial.println("开启输出");
+    } else if (isOn && currentTime - startTime >= threeMinutesInMillis) {
+        // 关闭状态
+        digitalWrite(outputPin, LOW);
+        isOn = false;
+        startTime = currentTime;
+        Serial.println("关闭输出");
+    }
+}
