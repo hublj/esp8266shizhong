@@ -1,0 +1,347 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <Wire.h>
+#include <Adafruit_SSD1306.h>
+
+// 定义8个输出控制的引脚
+const int outputPin0 = 0;
+const int outputPin2 = 2;
+const int outputPin4 = 4;
+const int outputPin5 = 5;
+const int outputPin12 = 12;
+const int outputPin13 = 13;
+const int outputPin14 = 14;
+const int outputPin15 = 15;
+
+// 最大WiFi连接尝试次数
+const int maxWiFiConnectAttempts = 5;
+
+// 用于记录当前的自锁状态，true为开启，false为关闭
+bool selfLockState = false;
+
+ESP8266WebServer server(80);
+
+// WiFi网络的SSID和密码，需根据实际情况修改
+const char* ssid = "2.4G";
+const char* password = "8888888888";
+
+// OLED显示屏相关定义
+Adafruit_SSD1306 display(128, 64, &Wire, -1);
+
+// 用于记录是否通过局域网控制了输出引脚电平
+bool isLanControlled = false;
+
+// 记录上一次的输出状态和IP地址
+String lastOutputState0 = "";
+String lastOutputState2 = "";
+String lastOutputState4 = "";
+String lastOutputState5 = "";
+String lastOutputState12 = "";
+String lastOutputState13 = "";
+String lastOutputState14 = "";
+String lastOutputState15 = "";
+String lastIPAddress = "";
+
+// 存储IP地址的字符串
+String ipAddressString;
+
+// 用于OLED显示屏更新计数
+int displayUpdateCounter = 0;
+const int displayUpdateInterval = 10;  // 每10次循环更新一次显示屏
+
+// 声明lastButtonState变量
+bool lastButtonState = HIGH;
+
+// 声明lastDebounceTime变量
+unsigned long lastDebounceTime = 0;
+
+// 声明buttonState变量
+bool buttonState;
+
+void setup() {
+    // 初始化串口通信，波特率可根据需要设置
+    Serial.begin(115200);
+
+    // 设置8个输出引脚为输出模式
+    pinMode(outputPin0, OUTPUT);
+    pinMode(outputPin2, OUTPUT);
+    pinMode(outputPin4, OUTPUT);
+    pinMode(outputPin5, OUTPUT);
+    pinMode(outputPin12, OUTPUT);
+    pinMode(outputPin13, OUTPUT);
+    pinMode(outputPin14, OUTPUT);
+    pinMode(outputPin15, OUTPUT);
+
+    // 初始化输出引脚为低电平
+    digitalWrite(outputPin0, LOW);
+    digitalWrite(outputPin2, LOW);
+    digitalWrite(outputPin4, LOW);
+    digitalWrite(outputPin5, LOW);
+    digitalWrite(outputPin12, LOW);
+    digitalWrite(outputPin13, LOW);
+    digitalWrite(outputPin14, LOW);
+    digitalWrite(outputPin15, LOW);
+
+    // 尝试连接WiFi
+    int wifiConnectAttempts = 0;
+    WiFi.begin(ssid, password);
+    while (WiFi.status()!= WL_CONNECTED && wifiConnectAttempts < maxWiFiConnectAttempts) {
+        delay(5000);
+        Serial.print(".");
+        wifiConnectAttempts++;
+    }
+
+    if (WiFi.status()!= WL_CONNECTED) {
+        Serial.println("WiFi connection failed!");
+        while (1);
+    } else {
+        ipAddressString = "IP: " + WiFi.localIP().toString();
+        Serial.println("WiFi connected");
+        Serial.println(ipAddressString);
+
+        // 初始化OLED显示屏
+        Wire.begin(1, 3);
+        if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+            Serial.println("OLED display initialization failed!");
+            // 尝试重新初始化，可设置重试次数等
+            for (int i = 0; i < 3; i++) {
+                delay(1000);
+                if (display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+                    Serial.println("OLED display successfully reinitialized!");
+                    break;
+                }
+            }
+            if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+                Serial.println("Failed to reinitialize OLED display. Please check connections.");
+                while (1);
+            }
+        }
+        display.clearDisplay();
+        display.setTextSize(1);
+        display.setTextColor(WHITE);
+        display.setCursor(0, 0);
+        display.println("Initializing...");
+        display.display();
+
+        // 启动Web服务器
+        server.begin();
+        // 设置控制路由
+        server.on("/control0", handleControl0);
+        server.on("/control2", handleControl2);
+        server.on("/control4", handleControl4);
+        server.on("/control5", handleControl5);
+        server.on("/control12", handleControl12);
+        server.on("/control13", handleControl13);
+        server.on("/control14", handleControl14);
+        server.on("/control15", handleControl15);
+    }
+}
+
+void handleControl0() {
+    if (server.hasArg("state")) {
+        String state = server.arg("state");
+        if (state == "high") {
+            digitalWrite(outputPin0, HIGH);
+            isLanControlled = true;
+            selfLockState = false;
+        } else if (state == "low") {
+            digitalWrite(outputPin0, LOW);
+            isLanControlled = true;
+            selfLockState = true;
+        }
+    }
+    server.send(200, "text/plain", "Output state set");
+}
+
+void handleControl2() {
+    if (server.hasArg("state")) {
+        String state = server.arg("state");
+        if (state == "high") {
+            digitalWrite(outputPin2, HIGH);
+            isLanControlled = true;
+            selfLockState = false;
+        } else if (state == "low") {
+            digitalWrite(outputPin2, LOW);
+            isLanControlled = true;
+            selfLockState = true;
+        }
+    }
+    server.send(200, "text/plain", "Output state set");
+}
+
+void handleControl4() {
+    if (server.hasArg("state")) {
+        String state = server.arg("state");
+        if (state == "high") {
+            digitalWrite(outputPin4, HIGH);
+            isLanControlled = true;
+            selfLockState = false;
+        } else if (state == "low") {
+            digitalWrite(outputPin4, LOW);
+            isLanControlled = true;
+            selfLockState = true;
+        }
+    }
+    server.send(200, "text/plain", "Output state set");
+}
+
+void handleControl5() {
+    if (server.hasArg("state")) {
+        String state = server.arg("state");
+        if (state == "high") {
+            digitalWrite(outputPin5, HIGH);
+            isLanControlled = true;
+            selfLockState = false;
+        } else if (state == "low") {
+            digitalWrite(outputPin5, LOW);
+            isLanControlled = true;
+            selfLockState = true;
+        }
+    }
+    server.send(200, "text/plain", "Output state set");
+}
+
+void handleControl12() {
+    if (server.hasArg("state")) {
+        String state = server.arg("state");
+        if (state == "high") {
+            digitalWrite(outputPin12, HIGH);
+            isLanControlled = true;
+            selfLockState = false;
+        } else if (state == "low") {
+            digitalWrite(outputPin12, LOW);
+            isLanControlled = true;
+            selfLockState = true;
+        }
+    }
+    server.send(200, "text/plain", "Output state set");
+}
+
+void handleControl13() {
+    if (server.hasArg("state")) {
+        String state = server.arg("state");
+        if (state == "high") {
+            digitalWrite(outputPin13, HIGH);
+            isLanControlled = true;
+            selfLockState = false;
+        } else if (state == "low") {
+            digitalWrite(outputPin13, LOW);
+            isLanControlled = true;
+            selfLockState = true;
+        }
+    }
+    server.send(200, "text/plain", "Output state set");
+}
+
+void handleControl14() {
+    if (server.hasArg("state")) {
+        String state = server.arg("state");
+        if (state == "high") {
+            digitalWrite(outputPin14, HIGH);
+            isLanControlled = true;
+            selfLockState = false;
+        } else if (state == "low") {
+            digitalWrite(outputPin14, LOW);
+            isLanControlled = true;
+            selfLockState = true;
+        }
+    }
+    server.send(200, "text/plain", "Output state set");
+}
+
+void handleControl15() {
+    if (server.hasArg("state")) {
+        String state = server.arg("state");
+        if (state == "high") {
+            digitalWrite(outputPin15, HIGH);
+            isLanControlled = true;
+            selfLockState = false;
+        } else if (state == "low") {
+            digitalWrite(outputPin15, LOW);
+            isLanControlled = true;
+            selfLockState = true;
+        }
+    }
+    server.send(200, "text/plain", "Output state set");
+}
+
+void loop() {
+    // 检查WiFi状态，如果断开尝试重新连接
+    if (WiFi.status()!= WL_CONNECTED) {
+        Serial.println("WiFi disconnected, attempting to reconnect...");
+        WiFi.begin(ssid, password);
+        while (WiFi.status()!= WL_CONNECTED) {
+            delay(5000);
+            Serial.print(".");
+        }
+        Serial.println("WiFi reconnected");
+        // 更新IP地址字符串
+        ipAddressString = "IP: " + WiFi.localIP().toString();
+        Serial.println(ipAddressString);
+    }
+
+    bool currentOutputStateValue0 = digitalRead(outputPin0);
+    String currentOutputState0 = currentOutputStateValue0? "Output: ON" : "Output: OFF";
+
+    bool currentOutputStateValue2 = digitalRead(outputPin2);
+    String currentOutputState2 = currentOutputStateValue2? "Output: ON" : "Output: OFF";
+
+    bool currentOutputStateValue4 = digitalRead(outputPin4);
+    String currentOutputState4 = currentOutputStateValue4? "Output: ON" : "Output: OFF";
+
+    bool currentOutputStateValue5 = digitalRead(outputPin5);
+    String currentOutputState5 = currentOutputStateValue5? "Output: ON" : "Output: OFF";
+
+    bool currentOutputStateValue12 = digitalRead(outputPin12);
+    String currentOutputState12 = currentOutputStateValue12? "Output: ON" : "Output: OFF";
+
+    bool currentOutputStateValue13 = digitalRead(outputPin13);
+    String currentOutputState13 = currentOutputStateValue13? "Output: ON" : "Output: OFF";
+
+    bool currentOutputStateValue14 = digitalRead(outputPin14);
+    String currentOutputState14 = currentOutputStateValue14? "Output: ON" : "Output: OFF";
+
+    bool currentOutputStateValue15 = digitalRead(outputPin15);
+    String currentOutputState15 = currentOutputStateValue15? "Output: ON" : "Output: OFF";
+
+    displayUpdateCounter++;
+    if (displayUpdateCounter >= displayUpdateInterval) {
+        // 检查IP地址是否变化
+        if (currentOutputState0!= lastOutputState0 ||
+            currentOutputState2!= lastOutputState2 ||
+            currentOutputState4!= lastOutputState4 ||
+            currentOutputState5!= lastOutputState5 ||
+            currentOutputState12!= lastOutputState12 ||
+            currentOutputState13!= lastOutputState13 ||
+            currentOutputState14!= lastOutputState14 ||
+            currentOutputState15!= lastOutputState15 ||
+            ipAddressString!= lastIPAddress) {
+            display.clearDisplay();
+            display.setTextSize(1);
+            display.setTextColor(WHITE);
+            display.setCursor(0, 0);
+            display.println(ipAddressString);
+            display.println(currentOutputState0);
+            display.println(currentOutputState2);
+            display.println(currentOutputState4);
+            display.println(currentOutputState5);
+            display.println(currentOutputState12);
+            display.println(currentOutputState13);
+            display.println(currentOutputState14);
+            display.println(currentOutputState15);
+            display.display();
+            lastOutputState0 = currentOutputState0;
+            lastOutputState2 = currentOutputState2;
+            lastOutputState4 = currentOutputState4;
+            lastOutputState5 = currentOutputState5;
+            lastOutputState12 = currentOutputState12;
+            lastOutputState13 = currentOutputState13;
+            lastOutputState14 = currentOutputState14;
+            lastOutputState15 = currentOutputState15;
+            lastIPAddress = ipAddressString;
+        }
+        displayUpdateCounter = 0;
+    }
+
+    server.handleClient();
+}
