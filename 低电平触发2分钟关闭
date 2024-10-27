@@ -53,7 +53,7 @@ void loop() {
         }
     }
 
-    // 检测是否处于自锁模式且从起始时间开始已经过了两分钟（180000 毫秒）
+    // 检测是否处于自锁模式且从起始时间开始已经过了两分钟（120000 毫秒）
     if (isLocked && (millis() - startTime >= 120000)) {
         digitalWrite(outputPin, LOW);
         isLocked = false;
