@@ -1,5 +1,7 @@
 #include <ESP8266WiFi.h>
 
+// 只需要改初始状态为开启或关闭和开启时间和关闭时间
+
 // 定义输出引脚
 const int outputPin = 0;
 
@@ -20,7 +22,7 @@ void setup() {
     // 设置输出引脚为输出模式
     pinMode(outputPin, OUTPUT);
 
-    // 初始状态为关闭
+    // 初始状态为开启
     digitalWrite(outputPin, HIGH);//初始化开启为HIGH//关闭为LOW
     isOn = true;//开启为true//关闭为false
 }
