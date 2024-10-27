@@ -1,0 +1,68 @@
+// 引入 ESP8266WiFi.h 库，如果你还需要进行 WiFi 相关操作的话，这里先包含进来，若不需要可去掉
+#include <ESP8266WiFi.h>
+
+// 定义光电开关连接的输入引脚
+const int inputPin = 2;  
+// 定义要进行输出操作的引脚，这里按你说的是 0 引脚
+const int outputPin = 0;  
+
+// 记录进入自锁模式的起始时间
+unsigned long startTime;  
+// 用于标记是否处于自锁模式
+bool isLocked = false;  
+
+// 用于消抖的变量，记录上一次检测到低电平的时间
+unsigned long lastDebounceTime = 0;  
+// 消抖时间间隔，这里设置为 20 毫秒
+const unsigned long debounceDelay = 20;  
+
+void setup() {
+    // 设置输入引脚为输入模式
+    pinMode(inputPin, INPUT);  
+    // 设置输出引脚为输出模式
+    pinMode(outputPin, OUTPUT);  
+
+    // 如果你还需要进行 WiFi 相关初始化操作，可在这里添加，比如：
+    // WiFi.begin("your_SSID", "your_PASSWORD");
+    // while (WiFi.status()!= WL_CONNECTED) {
+    //     delay(500);
+    //     Serial.println("Connecting to WiFi...");
+    // }
+    // Serial.println("Connected to WiFi");
+
+    Serial.begin(115200);
+    Serial.println("Setup completed");
+}
+
+void loop() {
+    // 读取当前输入引脚的电平状态
+    int reading = digitalRead(inputPin);  
+
+    // 检查是否检测到低电平且距离上次检测到低电平已经过了消抖时间间隔
+    if (reading == LOW && (millis() - lastDebounceTime >= debounceDelay)) {
+        // 更新上次检测到低电平的时间
+        lastDebounceTime = millis();  
+
+        // 如果已经处于自锁模式，直接关闭并退出自锁
+        if (isLocked) {
+            digitalWrite(outputPin, LOW);
+            isLocked = false;
+            Serial.println("Exited self-locking mode due to low level trigger within two hours");
+        } else {
+            // 如果未处于自锁模式，进入自锁模式并记录起始时间
+            isLocked = true;
+            startTime = millis();
+            digitalWrite(outputPin, HIGH);  
+            Serial.println("Entered self-locking mode");
+        }
+    }
+
+    // 如果处于自锁模式且从起始时间开始已经过了两个小时（7200000 毫秒），关闭并退出自锁
+    if (isLocked && (millis() - startTime >= 7200000)) {
+        digitalWrite(outputPin, LOW);
+        isLocked = false;
+        Serial.println("Exited self-locking mode after two hours without low level trigger");
+    }
+
+    delay(10);
+}
