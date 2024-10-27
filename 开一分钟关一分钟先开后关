@@ -1,5 +1,7 @@
 #include <ESP8266WiFi.h>
 
+// 只需要改初始状态为开启或关闭和开启时间和关闭时间
+
 // 定义输出引脚
 const int outputPin = 0;
 
