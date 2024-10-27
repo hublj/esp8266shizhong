@@ -1,0 +1,58 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266WiFiMulti.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h>
+
+// 定义呼吸灯连接的引脚
+int outputPin = 0;
+
+// PWM值的范围
+const int pwmMin = 0;
+const int pwmMax = 1023;
+
+// 呼吸灯渐变的步长，可根据需要调整
+const int stepSize = 3;//例如，当呼吸灯处于渐亮过程时，每次亮度增加的值为这个步长大小；处于渐暗过程时，每次亮度减少的值也是这个步长大小。
+                       //初始化为 3 意味着每次亮度变化的幅度是 3。如果这个值较大，呼吸灯的亮度变化会比较快；如果这个值较小，亮度变化会比较缓慢。
+
+// 用于控制呼吸灯渐变的方向，true为渐亮，false为渐暗
+bool isBrightening = true;
+
+// 当前的PWM值
+int currentPwmValue = pwmMin;
+
+void setup() {
+    // 初始化串口通信，波特率可根据需要设置
+    Serial.begin(115200);
+
+    // 设置呼吸灯引脚为输出模式，并设置为PWM输出
+    pinMode(outputPin, OUTPUT);
+    analogWriteFreq(1000); // 设置PWM频率为1000Hz，可根据实际情况调整
+    analogWriteRange(pwmMax); // 设置PWM范围
+
+    // 初始化PWM输出值为最小值
+    analogWrite(outputPin, currentPwmValue);
+}
+
+void loop() {
+    if (outputPin) {
+        // 渐亮过程
+        currentPwmValue += stepSize;
+        if (currentPwmValue >= pwmMax) {
+            currentPwmValue = pwmMax;
+            outputPin = false;
+        }
+    } else {
+        // 渐暗过程
+        currentPwmValue -= stepSize;
+        if (currentPwmValue <= pwmMin) {
+            currentPwmValue = pwmMin;
+            outputPin = true;
+        }
+    }
+
+    // 更新PWM输出值
+    analogWrite(outputPin, currentPwmValue);
+
+    // 适当延时，让呼吸灯效果更平滑，可根据需要调整延时时间
+    delay(5);//你可以根据实际需要调整这个延迟时间的值，以获得不同的呼吸灯效果。值越大，延迟时间越长，呼吸灯变化越慢；值越小，延迟时间越短，呼吸灯变化越快。
+}
