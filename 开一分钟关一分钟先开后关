@@ -10,7 +10,7 @@ volatile unsigned long startTime = 0;
 // 状态标志，true 表示开启，false 表示关闭
 bool isOn = false;
 
-// 3 分钟的毫秒数
+// 1 分钟的毫秒数
 const unsigned long threeMinutesInMillis = 1 * 60 * 1000;//只需要改第一个数字，数字几就是几分钟
 
 void setup() {
