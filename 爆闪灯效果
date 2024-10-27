@@ -1,0 +1,15 @@
+const int ledPin = 0; // 定义连接 LED 的引脚
+const int flashDuration = 100; // 爆闪持续时间（毫秒）
+const int pauseDuration = 1000; // 两次爆闪之间的停顿时间（毫秒）
+
+void setup() {
+  pinMode(ledPin, OUTPUT);
+}
+
+void loop() {
+  // 爆闪
+  digitalWrite(ledPin, HIGH);
+  delay(flashDuration);
+  digitalWrite(ledPin, LOW);
+  delay(pauseDuration);
+}
