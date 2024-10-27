@@ -1,0 +1,267 @@
+1. **对于`outputPin`的控制地址**：
+   - 在浏览器中输入运行代码的设备的IP地址（在代码中`ipAddressString`记录了这个IP地址，
+格式如`IP: xxx.xxx.xxx.xxx`），然后跟上`/control`。例如，如果IP地址是`192.168.1.100`，
+那么在浏览器地址栏输入`http://192.168.1.100/control`。
+并且可以通过添加参数`?state=high`或`?state=low`来控制引脚输出高电平或低电平，
+完整的控制高电平的地址示例是`http://192.168.1.100/control?state=high`。
+2. **对于`outputPin2`的控制地址**：
+   - 同样是设备的IP地址，跟上`/control2`。例如`http://192.168.1.100/control2`，
+通过添加`?state=high`或`?state=low`来控制这个引脚的电平，
+如`http://192.168.1.100/control2?state=high`用于将`outputPin2`设置为高电平。
+
+
+
+以下是修改后的代码示例，用于控制4个输出引脚（假设引脚分别为0、2、4、5，你可根据实际需求修改引脚号）：
+
+```cpp
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <Wire.h>
+#include <Adafruit_SSD1306.h>
+
+// 定义4个输出控制的引脚
+const int outputPin0 = 0;
+const int outputPin2 = 2;
+const int outputPin4 = 4;
+const int outputPin5 = 5;
+
+// 最大WiFi连接尝试次数
+const int maxWiFiConnectAttempts = 5;
+
+// 用于记录当前的自锁状态，true为开启，false为关闭
+bool selfLockState = false;
+
+ESP8266WebServer server(80);
+
+// WiFi网络的SSID和密码，需根据实际情况修改
+const char* ssid = "2.4G";
+const char* password = "8888888888";
+
+// OLED显示屏相关定义
+Adafruit_SSD1306 display(128, 64, &Wire, -1);
+
+// 用于记录是否通过局域网控制了输出引脚电平
+bool isLanControlled = false;
+
+// 记录上一次的输出状态和IP地址
+String lastOutputState0 = "";
+String lastOutputState2 = "";
+String lastOutputState4 = "";
+String lastOutputState5 = "";
+String lastIPAddress = "";
+
+// 存储IP地址的字符串
+String ipAddressString;
+
+// 用于OLED显示屏更新计数
+int displayUpdateCounter = 0;
+const int displayUpdateInterval = 10;  // 每10次循环更新一次显示屏
+
+// 声明lastButtonState变量
+bool lastButtonState = HIGH;
+
+// 声明lastDebounceTime变量
+unsigned long lastDebounceTime = 0;
+
+// 声明buttonState变量
+bool buttonState;
+
+void setup() {
+    // 初始化串口通信，波特率可根据需要设置
+    Serial.begin(115200);
+
+    // 设置4个输出引脚为输出模式
+    pinMode(outputPin0, OUTPUT);
+    pinMode(outputPin2, OUTPUT);
+    pinMode(outputPin4, OUTPUT);
+    pinMode(outputPin5, OUTPUT);
+
+    // 初始化输出引脚为低电平
+    digitalWrite(outputPin0, LOW);
+    digitalWrite(outputPin2, LOW);
+    digitalWrite(outputPin4, LOW);
+    digitalWrite(outputPin5, LOW);
+
+    // 尝试连接WiFi
+    int wifiConnectAttempts = 0;
+    WiFi.begin(ssid, password);
+    while (WiFi.status()!= WL_CONNECTED && wifiConnectAttempts < maxWiFiConnectAttempts) {
+        delay(5000);
+        Serial.print(".");
+        wifiConnectAttempts++;
+    }
+
+    if (WiFi.status()!= WL_CONNECTED) {
+        Serial.println("WiFi connection failed!");
+        while (1);
+    } else {
+        ipAddressString = "IP: " + WiFi.localIP().toString();
+        Serial.println("WiFi connected");
+        Serial.println(ipAddressString);
+
+        // 初始化OLED显示屏
+        Wire.begin(1, 3);
+        if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+            Serial.println("OLED display initialization failed!");
+            // 尝试重新初始化，可设置重试次数等
+            for (int i = 0; i < 3; i++) {
+                delay(1000);
+                if (display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+                    Serial.println("OLED display successfully reinitialized!");
+                    break;
+                }
+            }
+            if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+                Serial.println("Failed to reinitialize OLED display. Please check connections.");
+                while (1);
+            }
+        }
+        display.clearDisplay();
+        display.setTextSize(1);
+        display.setTextColor(WHITE);
+        display.setCursor(0, 0);
+        display.println("Initializing...");
+        display.display();
+
+        // 启动Web服务器
+        server.begin();
+        // 设置控制路由
+        server.on("/control0", handleControl0);
+        server.on("/control2", handleControl2);
+        server.on("/control4", handleControl4);
+        server.on("/control5", handleControl5);
+    }
+}
+
+void handleControl0() {
+    if (server.hasArg("state")) {
+        String state = server.arg("state");
+        if (state == "high") {
+            digitalWrite(outputPin0, HIGH);
+            isLanControlled = true;
+            selfLockState = false;
+        } else if (state == "low") {
+            digitalWrite(outputPin0, LOW);
+            isLanControlled = true;
+            selfLockState = true;
+        }
+    }
+    server.send(200, "text/plain", "Output state set");
+}
+
+void handleControl2() {
+    if (server.hasArg("state")) {
+        String state = server.arg("state");
+        if (state == "high") {
+            digitalWrite(outputPin2, HIGH);
+            isLanControlled = true;
+            selfLockState = false;
+        } else if (state == "low") {
+            digitalWrite(outputPin2, LOW);
+            isLanControlled = true;
+            selfLockState = true;
+        }
+    }
+    server.send(200, "text/plain", "Output state set");
+}
+
+void handleControl4() {
+    if (server.hasArg("state")) {
+        String state = server.arg("state");
+        if (state == "high") {
+            digitalWrite(outputPin4, HIGH);
+            isLanControlled = true;
+            selfLockState = false;
+        } else if (state == "low") {
+            digitalWrite(outputPin4, LOW);
+            isLanControlled = true;
+            selfLockState = true;
+        }
+    }
+    server.send(200, "text/plain", "Output state set");
+}
+
+void handleControl5() {
+    if (server.hasArg("state")) {
+        String state = server.arg("state");
+        if (state == "high") {
+            digitalWrite(outputPin5, HIGH);
+            isLanControlled = true;
+            selfLockState = false;
+        } else if (state == "low") {
+            digitalWrite(outputPin5, LOW);
+            isLanControlled = true;
+            selfLockState = true;
+        }
+    }
+    server.send(200, "text/plain", "Output state set");
+}
+
+void loop() {
+    // 检查WiFi状态，如果断开尝试重新连接
+    if (WiFi.status()!= WL_CONNECTED) {
+        Serial.println("WiFi disconnected, attempting to reconnect...");
+        WiFi.begin(ssid, password);
+        while (WiFi.status()!= WL_CONNECTED) {
+            delay(5000);
+            Serial.print(".");
+        }
+        Serial.println("WiFi reconnected");
+        // 更新IP地址字符串
+        ipAddressString = "IP: " + WiFi.localIP().toString();
+        Serial.println(ipAddressString);
+    }
+
+    bool currentOutputStateValue0 = digitalRead(outputPin0);
+    String currentOutputState0 = currentOutputStateValue0? "Output: ON" : "Output: OFF";
+
+    bool currentOutputStateValue2 = digitalRead(outputPin2);
+    String currentOutputState2 = currentOutputStateValue2? "Output: ON" : "Output: OFF";
+
+    bool currentOutputStateValue4 = digitalRead(outputPin4);
+    String currentOutputState4 = currentOutputStateValue4? "Output: ON" : "Output: OFF";
+
+    bool currentOutputStateValue5 = digitalRead(outputPin5);
+    String currentOutputState5 = currentOutputStateValue5? "Output: ON" : "Output: OFF";
+
+    displayUpdateCounter++;
+    if (displayUpdateCounter >= displayUpdateInterval) {
+        // 检查IP地址是否变化
+        if (currentOutputState0!= lastOutputState0 ||
+            currentOutputState2!= lastOutputState2 ||
+            currentOutputState4!= lastOutputState4 ||
+            currentOutputState5!= lastOutputState5 ||
+            ipAddressString!= lastIPAddress) {
+            display.clearDisplay();
+            display.setTextSize(1);
+            display.setTextColor(WHITE);
+            display.setCursor(0, 0);
+            display.println(ipAddressString);
+            display.println(currentOutputState0);
+            display.println(currentOutputState2);
+            display.println(currentOutputState4);
+            display.println(currentOutputState5);
+            display.display();
+            lastOutputState0 = currentOutputState0;
+            lastOutputState2 = currentOutputState2;
+            lastOutputState4 = currentOutputState4;
+            lastOutputState5 = currentOutputState5;
+            lastIPAddress = ipAddressString;
+        }
+        displayUpdateCounter = 0;
+    }
+
+    server.handleClient();
+}
+```
+
+在上述代码中：
+- 首先定义了4个输出引脚`outputPin0`、`outputPin2`、`outputPin4`、`outputPin5`。
+- 在`setup`函数里，对这4个引脚进行了模式设置和初始电平设置，并在Web服务器中设置了4个不同的路由`/control0`、`/control2`、`/control4`、`/control5`，分别对应对这4个引脚的控制操作，由各自的`handleControl`函数来处理请求。
+- 在`loop`函数中，读取并显示这4个引脚的状态信息到OLED显示屏上，以便能实时查看各引脚的输出状态。
+
+相应的浏览器控制地址如下：
+- 控制`outputPin0`：`http://[设备IP地址]/control0?state=high`（设置高电平）或`http://[设备IP地址]/control0?state=low`（设置低电平）。
+- 控制`outputPin2`：`http://[设备IP地址]/control2?state=high`或`http://[设备IP地址]/control2?state=low`。
+- 控制`outputPin4`：`http://[设备IP地址]/control4?state=high`或`http://[设备IP地址]/control4?state=low`。
+- 控制`outputPin5`：`http://[设备IP地址]/control5?state=high`或`http://[设备IP地址]/control5?state=low`。
