@@ -9,7 +9,7 @@ volatile unsigned long startTime = 0;
 bool isOn = false;
 
 // 3 分钟的毫秒数
-const unsigned long threeMinutesInMillis = 3 * 60 * 1000;
+const unsigned long threeMinutesInMillis = 1 * 60 * 1000;//只需要改第一个数字，数字几就是几分钟
 
 void setup() {
     // 初始化串口通信，波特率可根据需要设置
@@ -18,8 +18,9 @@ void setup() {
     // 设置输出引脚为输出模式
     pinMode(outputPin, OUTPUT);
 
-    // 初始状态为关闭
-    digitalWrite(outputPin, LOW);
+    // 初始状态为开启
+    digitalWrite(outputPin, HIGH);//初始化开启为HIGH//关闭为LOW
+    isOn = true;//开启为true//关闭为false
 }
 
 void loop() {
