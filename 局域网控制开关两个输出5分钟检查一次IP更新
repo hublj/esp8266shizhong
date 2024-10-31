@@ -165,7 +165,9 @@ void loop() {
     displayUpdateCounter++;
     if (displayUpdateCounter >= displayUpdateInterval) {
         // 检查 IP 地址是否变化或是否到了检查 IP 的时间
-        if (currentOutputState!= lastOutputState || ipAddressString!= lastIPAddress || millis() - lastIPCheckTime >= 300000) {
+        if (currentOutputState!= lastOutputState || 
+            ipAddressString!= lastIPAddress || 
+            millis() - lastIPCheckTime >= 300000) {
             display.clearDisplay();
             display.setTextSize(1);
             display.setTextColor(WHITE);
