@@ -1,0 +1,185 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <Wire.h>
+#include <Adafruit_SSD1306.h>
+
+// 定义输出控制的引脚，新增引脚 2
+const int outputPin = 0;
+const int outputPin2 = 2;
+
+// 最大 WiFi 连接尝试次数
+const int maxWiFiConnectAttempts = 5;
+
+// 用于记录当前的自锁状态，true 为开启，false 为关闭
+bool selfLockState = false;
+
+ESP8266WebServer server(80);
+
+// WiFi 网络的 SSID 和密码，需根据实际情况修改
+const char* ssid = "2.4G";
+const char* password = "8888888888";
+
+// OLED 显示屏相关定义
+Adafruit_SSD1306 display(128, 64, &Wire, -1);
+
+// 用于记录是否通过局域网控制了输出引脚电平
+bool isLanControlled = false;
+
+// 记录上一次的输出状态和 IP 地址
+String lastOutputState = "";
+String lastIPAddress = "";
+
+// 存储 IP 地址的字符串
+String ipAddressString;
+
+// 用于 OLED 显示屏更新计数
+int displayUpdateCounter = 0;
+const int displayUpdateInterval = 10;  // 每 10 次循环更新一次显示屏
+
+// 声明 lastButtonState 变量
+bool lastButtonState = HIGH;
+
+// 声明 lastDebounceTime 变量
+unsigned long lastDebounceTime = 0;
+
+// 声明 buttonState 变量
+bool buttonState;
+
+// 记录上次检查 IP 的时间
+unsigned long lastIPCheckTime = 0;
+
+void setup() {
+    // 初始化串口通信，波特率可根据需要设置
+    Serial.begin(115200);
+
+    // 设置输出引脚为输出模式
+    pinMode(outputPin, OUTPUT);
+    pinMode(outputPin2, OUTPUT);
+
+    // 初始化输出引脚为低电平
+    digitalWrite(outputPin, LOW);
+    digitalWrite(outputPin2, LOW);
+
+    // 尝试连接 WiFi
+    int wifiConnectAttempts = 0;
+    WiFi.begin(ssid, password);
+    while (WiFi.status()!= WL_CONNECTED && wifiConnectAttempts < maxWiFiConnectAttempts) {
+        delay(5000);
+        Serial.print(".");
+        wifiConnectAttempts++;
+    }
+
+    if (WiFi.status()!= WL_CONNECTED) {
+        Serial.println("WiFi connection failed!");
+        while (1);
+    } else {
+        ipAddressString = "IP: " + WiFi.localIP().toString();
+        Serial.println("WiFi connected");
+        Serial.println(ipAddressString);
+
+        // 初始化 OLED 显示屏
+        Wire.begin(1, 3);
+        if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+            Serial.println("OLED display initialization failed!");
+            // 尝试重新初始化，可设置重试次数等
+            for (int i = 0; i < 3; i++) {
+                delay(1000);
+                if (display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+                    Serial.println("OLED display successfully reinitialized!");
+                    break;
+                }
+            }
+            if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+                Serial.println("Failed to reinitialize OLED display. Please check connections.");
+                while (1);
+            }
+        }
+        display.clearDisplay();
+        display.setTextSize(1);
+        display.setTextColor(WHITE);
+        display.setCursor(0, 0);
+        display.println("Initializing...");
+        display.display();
+
+        // 启动 Web 服务器
+        server.begin();
+        // 设置控制路由
+        server.on("/control", handleControl);
+        server.on("/control2", handleControl2);
+    }
+}
+
+void handleControl() {
+    if (server.hasArg("state")) {
+        String state = server.arg("state");
+        if (state == "high") {
+            digitalWrite(outputPin, HIGH);
+            isLanControlled = true;
+            selfLockState = false;
+        } else if (state == "low") {
+            digitalWrite(outputPin, LOW);
+            isLanControlled = true;
+            selfLockState = true;
+        }
+    }
+    server.send(200, "text/plain", "Output state set");
+}
+
+void handleControl2() {
+    if (server.hasArg("state")) {
+        String state = server.arg("state");
+        if (state == "high") {
+            digitalWrite(outputPin2, HIGH);
+            isLanControlled = true;
+            selfLockState = false;
+        } else if (state == "low") {
+            digitalWrite(outputPin2, LOW);
+            isLanControlled = true;
+            selfLockState = true;
+        }
+    }
+    server.send(200, "text/plain", "Output state set");
+}
+
+void loop() {
+    // 检查 WiFi 状态，如果断开尝试重新连接
+    if (WiFi.status()!= WL_CONNECTED) {
+        Serial.println("WiFi disconnected, attempting to reconnect...");
+        WiFi.begin(ssid, password);
+        while (WiFi.status()!= WL_CONNECTED) {
+            delay(5000);
+            Serial.print(".");
+        }
+        Serial.println("WiFi reconnected");
+        // 更新 IP 地址字符串
+        ipAddressString = "IP: " + WiFi.localIP().toString();
+        Serial.println(ipAddressString);
+    }
+
+    bool currentOutputStateValue = digitalRead(outputPin);
+    String currentOutputState = currentOutputStateValue? "Output: ON" : "Output: OFF";
+
+    bool currentOutputStateValue2 = digitalRead(outputPin2);
+    String currentOutputState2 = currentOutputStateValue2? "Output: ON" : "Output: OFF";
+
+    displayUpdateCounter++;
+    if (displayUpdateCounter >= displayUpdateInterval) {
+        // 检查 IP 地址是否变化或是否到了检查 IP 的时间
+        if (currentOutputState!= lastOutputState || ipAddressString!= lastIPAddress || millis() - lastIPCheckTime >= 300000) {
+            display.clearDisplay();
+            display.setTextSize(1);
+            display.setTextColor(WHITE);
+            display.setCursor(0, 0);
+            display.println(ipAddressString);
+            display.println(currentOutputState);
+            display.println(currentOutputState2);
+            display.display();
+            lastOutputState = currentOutputState;
+            lastIPAddress = ipAddressString;
+            lastIPCheckTime = millis();
+        }
+        displayUpdateCounter = 0;
+    }
+
+    server.handleClient();
+}
