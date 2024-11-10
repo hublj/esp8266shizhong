@@ -21,6 +21,11 @@ delay(2000); // 暂停2秒
   display.clearDisplay();
 
 
+  display.display();
+  delay(2000); // 暂停2秒
+  display.clearDisplay();
+
+
           display.setTextSize(1);
         display.setTextColor(WHITE);
         display.setCursor(0, 0);
