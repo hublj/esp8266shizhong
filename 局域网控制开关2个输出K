@@ -1,0 +1,111 @@
+#include <ESP8266WiFi.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <ESP8266WebServer.h>
+
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+#define OLED_RESET    -1 // No reset pin
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+const char* ssid = "2.4G"; // 替换为您的WiFi名称
+const char* password = "8888888888"; // 替换为您的WiFi密码
+
+int relay1Pin = 5; // D1
+int relay2Pin = 4; // D2
+
+ESP8266WebServer server(80);
+
+void setup() {
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
+
+  // 等待WiFi连接
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  // 初始化继电器引脚
+  pinMode(relay1Pin, OUTPUT);
+  pinMode(relay2Pin, OUTPUT);
+
+  // 初始化I2C通信
+  Wire.begin(3, 1); // SDA = GPIO3 (D3), SCL = GPIO1 (D1)
+
+  // 初始化OLED显示
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3C for 128x64
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;); // Don't proceed, loop forever
+  }
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0,0);
+  display.display();
+
+  // 配置Web服务器路由
+  server.on("/", handleRoot);
+  server.on("/relay1", handleRelay1);
+  server.on("/relay2", handleRelay2);
+  server.begin();
+  Serial.println("HTTP server started");
+}
+
+void loop() {
+  server.handleClient();
+  updateOLED();
+}
+
+void handleRoot() {
+  String html = "<html><head><title>Relay Control</title></head><body>"
+                "<p><a href=\"/relay1?state=1\">Turn on Relay 1</a></p>"
+                "<p><a href=\"/relay1?state=0\">Turn off Relay 1</a></p>"
+                "<p><a href=\"/relay2?state=1\">Turn on Relay 2</a></p>"
+                "<p><a href=\"/relay2?state=0\">Turn off Relay 2</a></p>"
+                "</body></html>";
+  server.send(200, "text/html", html);
+}
+
+void handleRelay1() {
+  String state = server.arg("state");
+  if (state == "1") {
+    digitalWrite(relay1Pin, HIGH);
+  } else if (state == "0") {
+    digitalWrite(relay1Pin, LOW);
+  }
+  server.send(200, "text/plain", "Relay 1 state changed");
+}
+
+void handleRelay2() {
+  String state = server.arg("state");
+  if (state == "1") {
+    digitalWrite(relay2Pin, HIGH);
+  } else if (state == "0") {
+    digitalWrite(relay2Pin, LOW);
+  }
+  server.send(200, "text/plain", "Relay 2 state changed");
+}
+
+void updateOLED() {
+  // 清除显示缓冲区
+  display.clearDisplay();
+  display.setCursor(0,0);
+
+  // 显示IP地址
+  display.print("IP: ");
+  display.println(WiFi.localIP().toString().c_str());
+
+  // 显示继电器状态
+  display.print("Relay 4: ");
+  display.print(digitalRead(relay1Pin) == HIGH ? "ON" : "OFF");
+  display.setCursor(0,15);
+  display.print("Relay 5: ");
+  display.print(digitalRead(relay2Pin) == HIGH ? "ON" : "OFF");
+  display.display();
+}
