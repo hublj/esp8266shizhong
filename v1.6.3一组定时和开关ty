@@ -1,0 +1,311 @@
+#include <ESP8266WiFi.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <ESP8266WebServer.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+
+// 设置 OLED 屏幕的宽度和高度
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+// 设置 NTP 服务器和时区
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 3600 * 8);
+
+// 定义输出引脚
+const int relayPin = 5; // D1
+
+// 定义 OLED 的 I2C 引脚
+const int sclPin = 1;
+const int sdaPin = 3;
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+ESP8266WebServer server(80);
+
+// 定义一个结构体来存储时间信息
+struct TimeInfo {
+    int hour;
+    int minute;
+    int second;
+    int day;
+    int month;
+    int year;
+};
+
+// 存储定时的开始小时和分钟
+int startHour = 0;
+int startMinute = 0;
+// 存储定时的结束小时和分钟
+int endHour = 0;
+int endMinute = 0;
+
+// 标志位，用于判断是否设置了定时
+bool isTimed = false;
+
+// 存储 IP 地址的字符串
+String ipAddressStr;
+
+// 用于滚动的字符串
+String scrollText = "You have more beauty to achieve. yaoyang production";
+int scrollPosition = 0;
+
+// 获取当前时间并返回结构体的函数
+TimeInfo getCurrentTime();
+
+// 判断当前时间是否在指定的时间段内
+bool isInOnPeriod(int startHour, int startMinute, int endHour, int endMinute);
+
+// 处理根路径请求
+void handleRoot();
+
+// 处理设置定时请求
+void handleSetTime();
+
+// 处理取消定时请求
+void handleCancelTiming();
+
+// 处理继电器控制请求
+void handleRelay();
+
+// 更新 OLED 显示
+void updateOLED();
+
+// 获取当前时间并返回结构体的函数
+TimeInfo getCurrentTime() {
+    time_t epochTime = timeClient.getEpochTime();
+    struct tm *timeInfo;
+    timeInfo = localtime(&epochTime);
+    TimeInfo currentTime;
+    currentTime.hour = timeInfo->tm_hour;
+    currentTime.minute = timeInfo->tm_min;
+    currentTime.second = timeInfo->tm_sec;
+    currentTime.day = timeInfo->tm_mday;
+    currentTime.month = timeInfo->tm_mon + 1; // tm_mon 从 0 开始
+    currentTime.year = timeInfo->tm_year + 1900;
+    return currentTime;
+}
+
+// 判断当前时间是否在指定的时间段内
+bool isInOnPeriod(int startHour, int startMinute, int endHour, int endMinute) {
+    TimeInfo currentTime = getCurrentTime();
+    int currentTotalMinutes = currentTime.hour * 60 + currentTime.minute;
+    int startTotalMinutes = startHour * 60 + startMinute;
+    int endTotalMinutes = endHour * 60 + endMinute;
+
+    if (endTotalMinutes < startTotalMinutes) {
+        // 跨越到第二天的情况
+        return currentTotalMinutes >= startTotalMinutes || currentTotalMinutes < endTotalMinutes;
+    } else {
+        // 同一天的情况
+        return currentTotalMinutes >= startTotalMinutes && currentTotalMinutes < endTotalMinutes;
+    }
+}
+
+void handleRoot() {
+    String html = "<html><head><title>Relay Control</title></head><body>"
+                  "<p><a href=\"/relay?state=1\">Turn on Relay</a></p>"
+                  "<p><a href=\"/relay?state=0\">Turn off Relay</a></p>"
+                  "<p><a href=\"/setTime\">Set Timing</a></p>"
+                  "<p><a href=\"/cancelTiming\">Cancel Timing</a></p>"
+                  "</body></html>";
+    server.send(200, "text/html", html);
+}
+
+void handleSetTime() {
+    if (server.method() == HTTP_POST) {
+        Serial.println("Received POST request for setting time.");
+        startHour = server.arg("startHour").toInt();
+        startMinute = server.arg("startMinute").toInt();
+        endHour = server.arg("endHour").toInt();
+        endMinute = server.arg("endMinute").toInt();
+        isTimed = true;
+        Serial.println("Set startHour: " + String(startHour));
+        Serial.println("Set startMinute: " + String(startMinute));
+        Serial.println("Set endHour: " + String(endHour));
+        Serial.println("Set endMinute: " + String(endMinute));
+        server.send(200, "text/html; charset=utf-8", "设置成功！");
+    } else if (server.method() == HTTP_GET) {
+        String html = "<html><head><meta charset=\"UTF-8\"></head><body>";
+        html += "<h1>设置定时时间</h1>";
+        html += "<form method='post' action='/setTime'>";
+        html += "开启时间：<br>";
+        html += "小时：<input type='number' name='startHour' min='0' max='23' value='" + String(startHour) + "'>";
+        html += "分钟：<input type='number' name='startMinute' min='0' max='59' value='" + String(startMinute) + "'><br><br>";
+        html += "关闭时间：<br>";
+        html += "小时：<input type='number' name='endHour' min='0' max='23' value='" + String(endHour) + "'>";
+        html += "分钟：<input type='number' name='endMinute' min='0' max='59' value='" + String(endMinute) + "'><br><br>";
+        html += "<input type='submit' value='设置定时'>";
+        html += "</form>";
+        html += "</body></html>";
+        server.send(200, "text/html; charset=utf-8", html);
+    }
+}
+
+void handleCancelTiming() {
+    isTimed = false;
+    server.send(200, "text/html; charset=utf-8", "定时已取消！");
+}
+
+void handleRelay() {
+    String state = server.arg("state");
+    if (state == "1") {
+        digitalWrite(relayPin, HIGH);  // 打开继电器
+        Serial.println("Relay turned ON");
+    } else if (state == "0") {
+        digitalWrite(relayPin, LOW);  // 关闭继电器
+        Serial.println("Relay turned OFF");
+    }
+    server.send(200, "text/plain", "Relay state changed");
+}
+
+void updateOLED() {
+    display.clearDisplay();
+    
+    // 固定显示日期时间在最上方
+    TimeInfo currentTime = getCurrentTime();
+    display.setCursor(0, 0);
+    display.print(currentTime.day);
+    display.print("/");
+    display.print(currentTime.month);
+    display.print("/");
+    display.print(currentTime.year);
+    display.setCursor(80, 0);
+    display.print(currentTime.hour);
+    display.print(":");
+    display.print(currentTime.minute);
+    display.print(":");
+    display.print(currentTime.second);
+
+    // 固定显示 IP 地址
+    display.setCursor(0, 10);
+    display.println(ipAddressStr);
+
+    // 显示继电器状态
+    display.setCursor(0, 20);
+    display.print(digitalRead(relayPin) ? "Relay: ON  " : "Relay: OFF ");
+
+    // 显示定时设置
+    if (isTimed) {
+        display.setCursor(0, 30);
+        display.print("timing: ");
+        display.print(startHour);
+        display.print(":");
+        display.print(startMinute);
+        display.print(" - ");
+        display.print(endHour);
+        display.print(":");
+        display.print(endMinute);
+        display.setCursor(0, 40);
+        display.println("Earn 100 million");
+
+
+    } else {
+        display.setCursor(0, 30);
+        display.println("No timing");
+        display.setCursor(0, 40);
+        display.println("I have a goal");
+        display.setCursor(0, 50);
+        display.println("Timer switch V1.6.3");
+    }
+
+    // 倒数第二行显示滚动的底部文本
+    display.setCursor(0, SCREEN_HEIGHT - 8);
+    display.print(scrollText.substring(scrollPosition));
+    scrollPosition++;
+    if (scrollPosition >= scrollText.length()) {
+        scrollPosition = 0;
+    }
+
+    display.display();
+}
+
+void setup() {
+    Serial.begin(115200);
+    WiFi.begin("2.4G", "8888888888");
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(1000);
+        Serial.println("连接 WiFi 中...");
+    }
+    Serial.println("已连接到 WiFi");
+
+    // 初始化输出引脚为低电平
+    pinMode(relayPin, OUTPUT);
+    digitalWrite(relayPin, LOW);
+
+    // 设置 I2C 引脚
+    Wire.begin(sdaPin, sclPin);
+
+    // 初始化 OLED 屏幕
+    if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+        Serial.println(F("SSD1306 分配失败"));
+        for (;;);
+    }
+    
+    display.setTextSize(1);
+    display.setTextColor(WHITE);
+    display.setCursor(0, 0);
+    display.println("Loading");
+    display.display();
+    delay(2000); // 暂停2秒
+    display.clearDisplay(); 
+
+    // 初始化 NTP 客户端
+    timeClient.begin();
+
+    server.on("/", handleRoot);
+    server.on("/setTime", handleSetTime);
+    server.on("/cancelTiming", handleCancelTiming);
+    server.on("/relay", handleRelay);
+    server.begin();
+
+    // 获取并保存 IP 地址
+    IPAddress localIP = WiFi.localIP();
+    ipAddressStr = "IP:" + String(localIP[0]) + "." +
+                   String(localIP[1]) + "." +
+                   String(localIP[2]) + "." +
+                   String(localIP[3]);
+
+    // 确保时间同步
+    timeClient.update();
+    TimeInfo currentTime = getCurrentTime();
+    Serial.print("Current time: ");
+    Serial.print(currentTime.hour);
+    Serial.print(":");
+    Serial.print(currentTime.minute);
+    Serial.print(":");
+    Serial.println(currentTime.second);
+}
+
+void loop() {
+    server.handleClient();
+
+    // 更新时间
+    timeClient.update();
+    TimeInfo currentTime = getCurrentTime();
+    Serial.print("Current time: ");
+    Serial.print(currentTime.hour);
+    Serial.print(":");
+    Serial.print(currentTime.minute);
+    Serial.print(":");
+    Serial.println(currentTime.second);
+
+    // 如果设置了定时，判断是否在定时时间段内
+    if (isTimed) {
+        bool inOnPeriod = isInOnPeriod(startHour, startMinute, endHour, endMinute);
+
+        // 根据状态设置输出引脚
+        if (inOnPeriod) {
+            digitalWrite(relayPin, HIGH);  // 打开继电器
+            Serial.println("Relay is ON");
+        } else {
+            digitalWrite(relayPin, LOW);   // 关闭继电器
+            Serial.println("Relay is OFF");
+        }
+    }
+
+    updateOLED();
+    delay(1000);
+}
