@@ -1,0 +1,658 @@
+#include <ESP8266WiFi.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <ESP8266WebServer.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+#include <DNSServer.h>
+
+// 设置 OLED 屏幕的宽度和高度
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+// 设置 NTP 服务器和时区
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 3600 * 8);
+
+// 定义输出引脚
+const int relay1Pin = 5; // D1
+const int relay2Pin = 4; // D2
+
+// 定义 OLED 的 I2C 引脚
+const int sclPin = 1;
+const int sdaPin = 3;
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+ESP8266WebServer server(80);
+DNSServer dnsServer;
+
+const char* ssid = "ESP8266_AP";  // 软 AP 的 SSID
+const char* password = "12345678";  // 软 AP 的密码
+
+// 存储用户输入的 WiFi 凭证
+String wifiSSID;
+String wifiPassword;
+
+// 定义一个结构体来存储时间信息
+struct TimeInfo {
+    int hour;
+    int minute;
+    int second;
+    int day;
+    int month;
+    int year;
+};
+
+// 存储定时的开始小时和分钟
+int startHourForGroup1 = 0;
+int startMinuteForGroup1 = 0;
+// 存储定时的结束小时和分钟
+int endHourForGroup1 = 0;
+int endMinuteForGroup1 = 0;
+
+// 存储第二个定时的开始小时和分钟
+int startHourForGroup2 = 0;
+int startMinuteForGroup2 = 0;
+// 存储第二个定时的结束小时和分钟
+int endHourForGroup2 = 0;
+int endMinuteForGroup2 = 0;
+
+// 标志位，用于判断是否设置了定时
+bool isTimedGroup1 = false;
+bool isTimedGroup2 = false;
+
+// 存储 IP 地址的字符串
+String ipAddressStr;
+
+// 用于滚动的字符串
+String scrollText = "If you have a dream, you will definitely come true, and my dream is to make 100 million. yaoyang production";
+int scrollPosition = 0;
+
+// 登录状态标志
+bool isLoggedIn = false;
+
+// 定义管理员用户名和密码
+const char* adminUsername = "admin";
+const char* adminPassword = "password";
+
+// 获取当前时间并返回结构体的函数
+TimeInfo getCurrentTime() {
+    time_t epochTime = timeClient.getEpochTime();
+    struct tm *timeInfo;
+    timeInfo = localtime(&epochTime);
+    TimeInfo currentTime;
+    currentTime.hour = timeInfo->tm_hour;
+    currentTime.minute = timeInfo->tm_min;
+    currentTime.second = timeInfo->tm_sec;
+    currentTime.day = timeInfo->tm_mday;
+    currentTime.month = timeInfo->tm_mon + 1; // tm_mon 从 0 开始
+    currentTime.year = timeInfo->tm_year + 1900;
+    return currentTime;
+}
+
+void updateOLED() {
+    display.clearDisplay();
+    
+    // 固定显示日期时间在最上方
+    TimeInfo currentTime = getCurrentTime();
+    display.setCursor(0, 0);
+    
+    display.print(currentTime.day);
+    display.print("/");
+    display.print(currentTime.month);
+    display.print("/");
+    display.print(currentTime.year);
+    display.setCursor(80, 0);
+    
+    display.print(currentTime.hour);
+    display.print(":");
+    display.print(currentTime.minute);
+    display.print(":");
+    display.print(currentTime.second);
+
+    // 固定显示 IP 地址
+    display.setCursor(0, 10);
+    display.println(ipAddressStr);
+
+    // 显示继电器状态
+    display.setCursor(0, 20);
+    display.print(digitalRead(relay1Pin) ? "Relay 1: ON  " : "Relay 1: OFF ");
+    display.setCursor(0, 30);
+    display.print(digitalRead(relay2Pin) ? "Relay 2: ON" : "Relay 2: OFF");
+
+    // 显示定时设置
+    if (isTimedGroup1) {
+        display.setCursor(0, 40);
+        display.print("time 1: ");
+        display.print(startHourForGroup1);
+        display.print(":");
+        display.print(startMinuteForGroup1);
+        display.print(" - ");
+        display.print(endHourForGroup1);
+        display.print(":");
+        display.print(endMinuteForGroup1);
+    } else {
+        display.setCursor(0, 40);
+        display.println("No timing set");
+    }
+
+    if (isTimedGroup2) {
+        display.setCursor(0, 50);
+        display.print("time 2: ");
+        display.print(startHourForGroup2);
+        display.print(":");
+        display.print(startMinuteForGroup2);
+        display.print(" - ");
+        display.print(endHourForGroup2);
+        display.print(":");
+        display.print(endMinuteForGroup2);
+    } else {
+        display.setCursor(0, 50);
+        display.println("Timer switch V3.6.3");
+    }
+
+    // 倒数第二行显示滚动的底部文本
+    display.setCursor(0, SCREEN_HEIGHT - 8);
+    display.print(scrollText.substring(scrollPosition));
+    scrollPosition++;
+    if (scrollPosition >= scrollText.length()) {
+        scrollPosition = 0;
+    }
+
+    display.display();
+}
+
+void handleRoot() {
+    if (!isLoggedIn) {
+        server.sendHeader("Location", "/login");
+        server.send(303);
+        return;
+    }
+
+    String html = "<!DOCTYPE html>"
+                  "<html lang=\"zh-CN\">"
+                  "<head>"
+                  "<meta charset=\"UTF-8\">"
+                  "<title>继电器控制</title>"
+                  "<style>"
+                  "body {"
+                  "  background-color: #4CAF50;" // 绿色背景
+                  "  color: white;" // 文字颜色为白色
+                  "  font-family: Arial, sans-serif;"
+                  "  text-align: center;"
+                  "  padding-top: 50px;"
+                  "}"
+                  "a {"
+                  "  display: block;"
+                  "  margin: 20px 0;"
+                  "  padding: 10px 20px;"
+                  "  background-color: #008CBA;" // 按钮背景色
+                  "  color: white;" // 按钮文字颜色
+                  "  text-decoration: none;"
+                  "  border-radius: 5px;"
+                  "}"
+                  "a:hover {"
+                  "  background-color: #005f73;" // 悬停时按钮背景色
+                  "}"
+                  "</style>"
+                  "</head>"
+                  "<body>"
+                  "<h1>继电器控制</h1>"
+                  "<p><a href=\"/relay1?state=1\">打开继电器1</a></p>"
+                  "<p><a href=\"/relay1?state=0\">关闭继电器1</a></p>"
+                  "<p><a href=\"/relay2?state=1\">打开继电器2</a></p>"
+                  "<p><a href=\"/relay2?state=0\">关闭继电器2</a></p>"
+                  "<p><a href=\"/setTime1\">设置定时 - 组1</a></p>"
+                  "<p><a href=\"/setTime2\">设置定时 - 组2</a></p>"
+                  "<p><a href=\"/cancelTiming1\">取消定时 - 组1</a></p>"
+                  "<p><a href=\"/cancelTiming2\">取消定时 - 组2</a></p>"
+                  "<p><a href=\"/taskList\">查看任务列表</a></p>"
+                  "</body>"
+                  "</html>";
+
+    server.send(200, "text/html; charset=utf-8", html);
+}
+
+void handleSetTime1() {
+    if (!isLoggedIn) {
+        server.sendHeader("Location", "/login");
+        server.send(303);
+        return;
+    }
+
+    if (server.method() == HTTP_POST) {
+        startHourForGroup1 = server.arg("startHourForGroup1").toInt();
+        startMinuteForGroup1 = server.arg("startMinuteForGroup1").toInt();
+        endHourForGroup1 = server.arg("endHourForGroup1").toInt();
+        endMinuteForGroup1 = server.arg("endMinuteForGroup1").toInt();
+        isTimedGroup1 = true;
+        server.send(200, "text/html; charset=utf-8", "设置成功！");
+    } else if (server.method() == HTTP_GET) {
+        String html = "<html><head><meta charset=\"UTF-8\"></head><body>"
+                      "<style>"
+                      "body {"
+                      "  background-color: #0074D9;" // 蓝色背景
+                      "  color: white;" // 文字颜色为白色
+                      "  font-family: Arial, sans-serif;"
+                      "  text-align: center;"
+                      "  padding-top: 50px;"
+                      "}"
+                      "form {"
+                      "  margin-top: 50px;"
+                      "}"
+                      "input {"
+                      "  padding: 10px; margin: 10px;"
+                      "}"
+                      "button {"
+                      "  padding: 10px 20px;"
+                      "}"
+                      "</style>"
+                      "<h1>设置定时时间 - 组1</h1>"
+                      "<form method='post' action='/setTime1'>"
+                      "开启时间：<br>"
+                      "小时：<input type='number' name='startHourForGroup1' min='0' max='23' value='" + String(startHourForGroup1) + "'>"
+                      "分钟：<input type='number' name='startMinuteForGroup1' min='0' max='59' value='" + String(startMinuteForGroup1) + "'><br><br>"
+                      "关闭时间：<br>"
+                      "小时：<input type='number' name='endHourForGroup1' min='0' max='23' value='" + String(endHourForGroup1) + "'>"
+                      "分钟：<input type='number' name='endMinuteForGroup1' min='0' max='59' value='" + String(endHourForGroup1) + "'><br><br>"
+                      "<input type='submit' value='设置定时'>"
+                      "</form>"
+                      "</body></html>";
+        server.send(200, "text/html; charset=utf-8", html);
+    }
+}
+
+void handleSetTime2() {
+    if (!isLoggedIn) {
+        server.sendHeader("Location", "/login");
+        server.send(303);
+        return;
+    }
+
+    if (server.method() == HTTP_POST) {
+        startHourForGroup2 = server.arg("startHourForGroup2").toInt();
+        startMinuteForGroup2 = server.arg("startMinuteForGroup2").toInt();
+        endHourForGroup2 = server.arg("endHourForGroup2").toInt();
+        endMinuteForGroup2 = server.arg("endMinuteForGroup2").toInt();
+        isTimedGroup2 = true;
+        server.send(200, "text/html; charset=utf-8", "设置成功！");
+    } else if (server.method() == HTTP_GET) {
+        String html = "<html><head><meta charset=\"UTF-8\"></head><body>"
+                      "<style>"
+                      "body {"
+                      "  background-color: #0074D9;" // 蓝色背景
+                      "  color: white;" // 文字颜色为白色
+                      "  font-family: Arial, sans-serif;"
+                      "  text-align: center;"
+                      "  padding-top: 50px;"
+                      "}"
+                      "form {"
+                      "  margin-top: 50px;"
+                      "}"
+                      "input {"
+                      "  padding: 10px; margin: 10px;"
+                      "}"
+                      "button {"
+                      "  padding: 10px 20px;"
+                      "}"
+                      "</style>"
+                      "<h1>设置定时时间 - 组2</h1>"
+                      "<form method='post' action='/setTime2'>"
+                      "开启时间：<br>"
+                      "小时：<input type='number' name='startHourForGroup2' min='0' max='23' value='" + String(startHourForGroup2) + "'>"
+                      "分钟：<input type='number' name='startMinuteForGroup2' min='0' max='59' value='" + String(startMinuteForGroup2) + "'><br><br>"
+                      "关闭时间：<br>"
+                      "小时：<input type='number' name='endHourForGroup2' min='0' max='23' value='" + String(endHourForGroup2) + "'>"
+                      "分钟：<input type='number' name='endMinuteForGroup2' min='0' max='59' value='" + String(endMinuteForGroup2) + "'><br><br>"
+                      "<input type='submit' value='设置定时'>"
+                      "</form>"
+                      "</body></html>";
+        server.send(200, "text/html; charset=utf-8", html);
+    }
+}
+
+void handleCancelTiming1() {
+    if (!isLoggedIn) {
+        server.sendHeader("Location", "/login");
+        server.send(303);
+        return;
+    }
+
+    isTimedGroup1 = false;
+    String html = "<html><head><meta charset=\"UTF-8\"></head><body>"
+                  "<style>"
+                  "body {"
+                  "  background-color: #0074D9;" // 蓝色背景
+                  "  color: white;" // 文字颜色为白色
+                  "  font-family: Arial, sans-serif;"
+                  "  text-align: center;"
+                  "  padding-top: 50px;"
+                  "}"
+                  "</style>"
+                  "<h1>取消定时 - 组1</h1>"
+                  "<p>定时已取消！</p>"
+                  "<a href='/'>返回主页面</a>"
+                  "</body></html>";
+    server.send(200, "text/html; charset=utf-8", html);
+}
+
+void handleCancelTiming2() {
+    if (!isLoggedIn) {
+        server.sendHeader("Location", "/login");
+        server.send(303);
+        return;
+    }
+
+    isTimedGroup2 = false;
+    String html = "<html><head><meta charset=\"UTF-8\"></head><body>"
+                  "<style>"
+                  "body {"
+                  "  background-color: #0074D9;" // 蓝色背景
+                  "  color: white;" // 文字颜色为白色
+                  "  font-family: Arial, sans-serif;"
+                  "  text-align: center;"
+                  "  padding-top: 50px;"
+                  "}"
+                  "</style>"
+                  "<h1>取消定时 - 组2</h1>"
+                  "<p>定时已取消！</p>"
+                  "<a href='/'>返回主页面</a>"
+                  "</body></html>";
+    server.send(200, "text/html; charset=utf-8", html);
+}
+
+void handleRelay1() {
+    if (!isLoggedIn) {
+        server.sendHeader("Location", "/login");
+        server.send(303);
+        return;
+    }
+
+    String state = server.arg("state");
+    if (state == "1") {
+        digitalWrite(relay1Pin, HIGH);  // 打开继电器1
+    } else if (state == "0") {
+        digitalWrite(relay1Pin, LOW);  // 关闭继电器1
+    }
+    server.send(200, "text/plain", "Relay 1 state changed");
+}
+
+void handleRelay2() {
+    if (!isLoggedIn) {
+        server.sendHeader("Location", "/login");
+        server.send(303);
+        return;
+    }
+
+    String state = server.arg("state");
+    if (state == "1") {
+        digitalWrite(relay2Pin, HIGH);  // 打开继电器2
+    } else if (state == "0") {
+        digitalWrite(relay2Pin, LOW);  // 关闭继电器2
+    }
+    server.send(200, "text/plain", "Relay 2 state changed");
+}
+
+void handleLogin() {
+    if (server.method() == HTTP_GET) {
+        String html = "<html><head><title>Login</title><style>"
+                      "body {"
+                      "  background-color: #6C5CE7;" // 紫色背景
+                      "  color: white;" // 文字颜色为白色
+                      "  font-family: Arial, sans-serif;"
+                      "  text-align: center;"
+                      "  padding-top: 50px;"
+                      "}"
+                      "form {"
+                      "  margin-top: 50px;"
+                      "}"
+                      "input {"
+                      "  padding: 10px; margin: 10px;"
+                      "}"
+                      "button {"
+                      "  padding: 10px 20px;"
+                      "}"
+                      "</style></head><body>"
+                      "<h1>Login</h1>"
+                      "<form method='post' action='/login'>"
+                      "Username: <input type='text' name='username'><br>"
+                      "Password: <input type='password' name='password'><br>"
+                      "<button type='submit'>Login</button>"
+                      "</form>"
+                      "</body></html>";
+        server.send(200, "text/html", html);
+    } else if (server.method() == HTTP_POST) {
+        String username = server.arg("username");
+        String password = server.arg("password");
+
+        if (username == adminUsername && password == adminPassword) {
+            isLoggedIn = true;
+            server.sendHeader("Location", "/");
+            server.send(303);
+        } else {
+            server.send(401, "text/html", "无效的用户名或密码");
+        }
+    }
+}
+
+void handleTaskList() {
+    if (!isLoggedIn) {
+        server.sendHeader("Location", "/login");
+        server.send(303);
+        return;
+    }
+
+    String html = "<!DOCTYPE html>"
+                  "<html lang=\"zh-CN\">"
+                  "<head>"
+                  "<meta charset=\"UTF-8\">"
+                  "<title>定时任务列表</title>"
+                  "<style>"
+                  "body {"
+                  "  background-color: #4CAF50;" // 绿色背景
+                  "  color: white;" // 文字颜色为白色
+                  "  font-family: Arial, sans-serif;"
+                  "  text-align: center;"
+                  "  padding-top: 50px;"
+                  "}"
+                  "a {"
+                  "  display: block;"
+                  "  margin: 20px 0;"
+                  "  padding: 10px 20px;"
+                  "  background-color: #008CBA;" // 按钮背景色
+                  "  color: white;" // 按钮文字颜色
+                  "  text-decoration: none;"
+                  "  border-radius: 5px;"
+                  "}"
+                  "a:hover {"
+                  "  background-color: #005f73;" // 悬停时按钮背景色
+                  "}"
+                  "</style>"
+                  "</head>"
+                  "<body>"
+                  "<h1>定时任务列表</h1>"
+                  "<p>这里是定时任务的列表。</p>"
+                  "<a href=\"/addTask\">添加新任务</a>"
+                  "<a href=\"/editTask\">编辑任务</a>"
+                  "<a href=\"/deleteTask\">删除任务</a>"
+                  "</body>"
+                  "</html>";
+
+    server.send(200, "text/html; charset=utf-8", html);
+}
+
+void handleConfigWiFi() {
+    // 发送 HTML 表单让用户输入 WiFi 凭证
+    String html = "<!DOCTYPE html>"
+                  "<html>"
+                  "<head>"
+                  "<title>WiFi Setup</title>"
+                  "</head>"
+                  "<body>"
+                  "<h1>Connect to WiFi</h1>"
+                  "<form action='/connect' method='post'>"
+                  "SSID: <input type='text' name='ssid'><br>"
+                  "Password: <input type='password' name='password'><br>"
+                  "<input type='submit' value='Connect'>"
+                  "</form>"
+                  "</body>"
+                  "</html>";
+    server.send(200, "text/html", html);
+}
+
+void handleConnectWiFi() {
+    // 获取用户输入的 WiFi 凭证
+    wifiSSID = server.arg("ssid");
+    wifiPassword = server.arg("password");
+
+    // 尝试连接到指定的 WiFi 网络
+    WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
+
+    // 等待连接结果
+    int connectAttempts = 0;
+    while (WiFi.status() != WL_CONNECTED && connectAttempts < 20) {
+        delay(500);
+        connectAttempts++;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+        // 连接成功
+        server.send(200, "text/html", "Connected to WiFi successfully!");
+    } else {
+        // 连接失败
+        server.send(200, "text/html", "Failed to connect to WiFi. Please try again.");
+    }
+}
+
+void setup() {
+    Serial.begin(115200);
+
+    // 配置软 AP
+    WiFi.softAP(ssid, password);
+
+    // 配置 DNS 服务器
+    dnsServer.start(53, "*", WiFi.softAPIP());
+
+    // 初始化输出引脚为低电平
+    pinMode(relay1Pin, OUTPUT);
+    digitalWrite(relay1Pin, LOW);
+    pinMode(relay2Pin, OUTPUT);
+    digitalWrite(relay2Pin, LOW);
+
+    // 设置 I2C 引脚
+    Wire.begin(sdaPin, sclPin);
+
+    // 初始化 OLED 屏幕
+    if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+        Serial.println(F("SSD1306 分配失败"));
+        for (;;);
+    }
+    
+    display.setTextSize(1);
+    display.setTextColor(WHITE);
+    display.setCursor(0, 0);
+    display.println("Loading");
+    display.display();
+    delay(2000); // 暂停2秒
+    display.clearDisplay(); 
+
+    // 初始化 NTP 客户端
+    timeClient.begin();
+
+    // 设置路由
+    server.on("/", handleRoot);
+    server.on("/setTime1", handleSetTime1);
+    server.on("/setTime2", handleSetTime2);
+    server.on("/cancelTiming1", handleCancelTiming1);
+    server.on("/cancelTiming2", handleCancelTiming2);
+    server.on("/relay1", handleRelay1);
+    server.on("/relay2", handleRelay2);
+    server.on("/login", handleLogin);
+    server.on("/taskList", handleTaskList);
+    server.on("/configWiFi", handleConfigWiFi);
+    server.on("/connect", HTTP_POST, handleConnectWiFi);
+    server.onNotFound([]() {
+        server.sendHeader("Location", "/");
+        server.send(302);
+    });
+
+    // 开始 HTTP 服务器
+    server.begin();
+
+    // 获取并保存 IP 地址
+    IPAddress localIP = WiFi.localIP();
+    ipAddressStr = "IP:" + String(localIP[0]) + "." +
+                   String(localIP[1]) + "." +
+                   String(localIP[2]) + "." +
+                   String(localIP[3]);
+
+    // 确保时间同步
+    timeClient.update();
+    TimeInfo currentTime = getCurrentTime();
+    Serial.print("当前时间: ");
+    Serial.print(currentTime.hour);
+    Serial.print(":");
+    Serial.print(currentTime.minute);
+    Serial.print(":");
+    Serial.println(currentTime.second);
+
+    Serial.println("Access Point started");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.softAPIP());
+}
+
+void loop() {
+    // 处理 DNS 请求
+    dnsServer.processNextRequest();
+
+    // 处理 HTTP 请求
+    server.handleClient();
+
+    // 更新时间
+    timeClient.update();
+    TimeInfo currentTime = getCurrentTime();
+
+    // 如果设置了定时，判断是否在定时时间段内
+    if (isTimedGroup1) {
+        bool isInOnPeriodForGroup1 = isInOnPeriod(startHourForGroup1, startMinuteForGroup1, endHourForGroup1, endMinuteForGroup1);
+        if (isInOnPeriodForGroup1) {
+            digitalWrite(relay1Pin, HIGH);  // 打开继电器1
+            Serial.println("Group 1 is ON");
+        } else {
+            digitalWrite(relay1Pin, LOW);  // 关闭继电器1
+            Serial.println("Group 1 is OFF");
+        }
+    }
+
+    if (isTimedGroup2) {
+        bool isInOnPeriodForGroup2 = isInOnPeriod(startHourForGroup2, startMinuteForGroup2, endHourForGroup2, endMinuteForGroup2);
+        if (isInOnPeriodForGroup2) {
+            digitalWrite(relay2Pin, HIGH);  // 打开继电器2
+            Serial.println("Group 2 is ON");
+        } else {
+            digitalWrite(relay2Pin, LOW);  // 关闭继电器2
+            Serial.println("Group 2 is OFF");
+        }
+    }
+
+    updateOLED();
+    delay(1000);
+}
+
+// 判断当前时间是否在指定的时间段内
+bool isInOnPeriod(int startHour, int startMinute, int endHour, int endMinute) {
+    TimeInfo currentTime = getCurrentTime();
+    int currentTotalMinutes = currentTime.hour * 60 + currentTime.minute;
+    int startTotalMinutes = startHour * 60 + startMinute;
+    int endTotalMinutes = endHour * 60 + endMinute;
+
+    if (endTotalMinutes < startTotalMinutes) {
+        // 跨越到第二天的情况
+        return currentTotalMinutes >= startTotalMinutes || currentTotalMinutes < endTotalMinutes;
+    } else {
+        // 同一天的情况
+        return currentTotalMinutes >= startTotalMinutes && currentTotalMinutes < endTotalMinutes;
+    }
+}
