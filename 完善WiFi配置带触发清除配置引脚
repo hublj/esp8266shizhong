@@ -611,7 +611,7 @@ void loop() {
         if (digitalRead(clearConfigButtonPin) == LOW) {
             WiFiManager wifiManager;
             wifiManager.resetSettings();
-            Serial.println("The WiFi configuration information has been cleared and is waiting for it to be reconfigured");
+            Serial.println("已清除WiFi配置信息，等待重新配置");
             // 可以在这里添加代码在OLED上显示提示信息告知用户配置已清除，比如：
             display.clearDisplay();
             display.setTextSize(1);
