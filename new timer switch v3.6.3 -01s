@@ -16,8 +16,8 @@ WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", 3600 * 8);
 
 // 定义输出引脚
-const int relay1Pin = 0; // D1
-const int relay2Pin = 2; // D2
+const int relay1Pin = 0; // D3
+const int relay2Pin = 2; // D4
 
 // 定义 OLED 的 I2C 引脚
 const int sclPin = 1;
