@@ -10,6 +10,7 @@
 
 //全局声明每页64字节
 #define EEPROM_PAGE_SIZE 64
+#define EEPROM_TOTAL_SIZE 16384 // 根据24C128芯片容量128K位换算成字节得到，即16384字节
 
 // 24C128 EEPROM相关定义
 #define EEPROM_ADDRESS 0x50
@@ -560,19 +561,27 @@ bool isInOnPeriod(int startHour, int startMinute, int endHour, int endMinute) {
   }
 }
 
-// 向EEPROM写入一个字节数据（添加延迟）
+// 向EEPROM写入数据的函数，添加写入重试机制和更详细的错误处理
 void writeEEPROM(int address, const char* data) {
-    Wire.beginTransmission(EEPROM_ADDRESS);
-    Wire.write((int)(address >> 8));
-    Wire.write((int)(address & 0xFF));
-    for (uint16_t i = 0; i < strlen(data); i++) {
-        Wire.write(data[i]);
-        delayMicroseconds(5000); // 每字节写入后延迟5毫秒
+    int maxRetries = 3;  // 最大重试次数
+    for (int retry = 0; retry < maxRetries; retry++) {
+        Wire.beginTransmission(EEPROM_ADDRESS);
+        Wire.write((int)(address >> 8));
+        Wire.write((int)(address & 0xFF));
+        for (uint16_t i = 0; i < strlen(data); i++) {
+            Wire.write(data[i]);
+            delayMicroseconds(5000);
+        }
+        if (Wire.endTransmission() == 0) {
+            return;  // 写入成功，直接返回
+        }
+        Serial.println("EEPROM写入数据出现错误，地址: " + String(address) + "，正在重试...");
+        delay(100);  // 重试间隔
     }
-    Wire.endTransmission();
+    Serial.println("多次重试后，EEPROM写入数据仍然失败，地址: " + String(address));
 }
 
-// 从EEPROM读取数据（添加延迟）
+// 从EEPROM读取数据的函数，添加读取结果判断和错误提示
 String readEEPROM(int address, int length) {
     String data = "";
     Wire.beginTransmission(EEPROM_ADDRESS);
@@ -580,106 +589,88 @@ String readEEPROM(int address, int length) {
     Wire.write((int)(address & 0xFF));
     Wire.endTransmission(false);
     Wire.requestFrom(EEPROM_ADDRESS, length);
+    int receivedBytes = 0;
     while (Wire.available()) {
         char c = Wire.read();
         data += c;
-        delayMicroseconds(5000); // 每字节读取后延迟5毫秒
+        receivedBytes++;
+    }
+    if (receivedBytes!= length) {
+        Serial.println("从EEPROM读取数据出现错误，期望读取 " + String(length) + " 字节，实际读取 " + String(receivedBytes) + " 字节，地址: " + String(address));
     }
     return data;
 }
 
-// 将定时设置数据写入EEPROM（使用页写入）
-void writeTimingSettingsToEEPROM() {
-    // 构建定时1的数据字符串
-    String data = String(startHourForGroup1, DEC) + String(startMinuteForGroup1, DEC) + String(endHourForGroup1, DEC) + String(endMinuteForGroup1, DEC) + (isTimedGroup1? "1" : "0");
-
-    // 写入定时1的数据到EEPROM（假设页大小为64字节）
-    byte dataArray[EEPROM_PAGE_SIZE];
-    for (int i = 0; i < data.length(); i++) {
-        dataArray[i] = data[i];
-    }
-    pageWriteToEEPROM(0, dataArray, data.length());
-
-    // 构建定时2的数据字符串
-    data = String(startHourForGroup2, DEC) + String(startMinuteForGroup2, DEC) + String(endHourForGroup2, DEC) + String(endMinuteForGroup2, DEC) + (isTimedGroup2? "1" : "0");
-
-    // 写入定时2的数据到EEPROM
-    for (int i = 0; i < data.length(); i++) {
-        dataArray[i] = data[i];
-    }
-    pageWriteToEEPROM(12, dataArray, data.length());
-}
-
-// 从EEPROM读取定时设置数据（根据页读取方式调整）
+// 从EEPROM读取定时设置数据的函数，添加数据合法性检查和读取前后延迟
 void readTimingSettingsFromEEPROM() {
-    // 读取定时1的设置（假设页大小为64字节）
-    byte dataArray[EEPROM_PAGE_SIZE];
-    readPageFromEEPROM(0, dataArray, 12);
-    String data = "";
-    for (int i = 0; i < 12; i++) {
-        data += (char)dataArray[i];
-    }
+    delay(20);  // 读取前增加延迟
+
+    // 读取定时1的设置
+    String data = readEEPROM(0, 12);
     if (data.length() == 12) {
-        startHourForGroup1 = data.substring(0, 2).toInt();
-        startMinuteForGroup1 = data.substring(2, 4).toInt();
-        endHourForGroup1 = data.substring(4, 6).toInt();
-        endMinuteForGroup1 = data.substring(6, 8).toInt();
-        isTimedGroup1 = data.substring(8, 9) == "1";
+        // 检查每个字符的合法性（这里简单判断时间部分是否为数字字符）
+        bool isValid = true;
+        for (int i = 0; i < 8; i++) {
+            if (data[i] < '0' || data[i] > '9') {
+                isValid = false;
+                break;
+            }
+        }
+        if (isValid) {
+            startHourForGroup1 = data.substring(0, 2).toInt();
+            startMinuteForGroup1 = data.substring(2, 4).toInt();
+            endHourForGroup1 = data.substring(4, 6).toInt();
+            endMinuteForGroup1 = data.substring(6, 8).toInt();
+            isTimedGroup1 = data.substring(8, 9) == "1";
+        } else {
+            Serial.println("定时1读取到的数据存在非法字符");
+        }
     }
 
     // 读取定时2的设置
-    readPageFromEEPROM(12, dataArray, 12);
-    data = "";
-    for (int i = 0; i < 12; i++) {
-        data += (char)dataArray[i];
-    }
+    data = readEEPROM(12, 12);
     if (data.length() == 12) {
-        startHourForGroup2 = data.substring(0, 2).toInt();
-        startMinuteForGroup2 = data.substring(2, 4).toInt();
-        endHourForGroup2 = data.substring(4, 6).toInt();
-        endMinuteForGroup2 = data.substring(6, 8).toInt();
-        isTimedGroup2 = data.substring(8, 9) == "1";
-    }
-}
-
-// 页读取函数（假设页大小为64字节）
-void readPageFromEEPROM(int startAddress, byte* data, int numBytes) {
-    Wire.beginTransmission(EEPROM_ADDRESS);
-    Wire.write((int)(startAddress >> 8));
-    Wire.write((int)(startAddress & 0xFF));
-    Wire.endTransmission(false);
-    Wire.requestFrom(EEPROM_ADDRESS, numBytes);
-    int i = 0;
-    while (Wire.available() && i < numBytes) {
-        data[i++] = Wire.read();
-        delayMicroseconds(5000); // 每字节读取后延迟5毫秒
-    }
-}
-
-// 页写入函数（假设页大小为64字节）
-void pageWriteToEEPROM(int startAddress, byte* data, int numBytes) {
-    int currentAddress = startAddress;
-    int bytesWritten = 0;
-
-    while (bytesWritten < numBytes) {
-        Wire.beginTransmission(EEPROM_ADDRESS);
-        Wire.write((int)(currentAddress >> 8));
-        Wire.write((int)(currentAddress & 0xFF));
-
-        for (int i = 0; i < min(numBytes - bytesWritten, EEPROM_PAGE_SIZE); i++) {
-            Wire.write(data[bytesWritten + i]);
+        bool isValid = true;
+        for (int i = 0; i < 8; i++) {
+            if (data[i] < '0' || data[i] > '9') {
+                isValid = false;
+                break;
+            }
         }
-
-        Wire.endTransmission();
-
-        for (int i = 0; i < min(numBytes - bytesWritten, EEPROM_PAGE_SIZE); i++) {
-            delayMicroseconds(5000); // 每字节写入后延迟5毫秒
+        if (isValid) {
+            startHourForGroup2 = data.substring(0, 2).toInt();
+            startMinuteForGroup2 = data.substring(2, 4).toInt();
+            endHourForGroup2 = data.substring(4, 6).toInt();
+            endMinuteForGroup2 = data.substring(6, 8).toInt();
+            isTimedGroup2 = data.substring(8, 9) == "1";
+        } else {
+            Serial.println("定时2读取到的数据存在非法字符");
         }
-
-        currentAddress += min(numBytes - bytesWritten, EEPROM_PAGE_SIZE);
-        bytesWritten += min(numBytes - bytesWritten, EEPROM_PAGE_SIZE);
     }
+
+    delay(20);  // 读取后增加延迟
 }
+
+// 将定时设置数据写入EEPROM的函数，添加地址范围检查
+void writeTimingSettingsToEEPROM() {
+    if (0 > 0 || 0 + 12 > EEPROM_TOTAL_SIZE) {
+        Serial.println("定时设置数据写入地址超出合理范围");
+        return;
+    }
+    // 构建定时1的数据字符串，确保格式化为固定长度（这里假设总长度12字节，格式如：00000000000，前8位分别为时分时分，最后一位为是否定时标志）
+    char data1[12];
+    sprintf(data1, "%02d%02d%02d%02d%c", startHourForGroup1, startMinuteForGroup1, endHourForGroup1, endMinuteForGroup1, isTimedGroup1? '1' : '0');
+    // 写入定时1的数据到EEPROM
+    writeEEPROM(0, data1);
+
+    // 构建定时2的数据字符串
+    char data2[12];
+    sprintf(data2, "%02d%02d%02d%02d%c", startHourForGroup2, startMinuteForGroup2, endHourForGroup2, endMinuteForGroup2, isTimedGroup2? '1' : '0');
+    // 写入定时2的数据到EEPROM
+    writeEEPROM(12, data2);
+}
+
+
 void setup() {
   Serial.begin(115200);
 
